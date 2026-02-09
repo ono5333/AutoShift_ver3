@@ -1,0 +1,179 @@
+rules:
+  facility_rules:
+    - id: "FR001"
+      rank: "A"
+      title: "夜勤は毎日2名配置"
+      description: "毎日、2名の夜勤スタッフを配置する"
+
+    - id: "FR002"
+      rank: "A"
+      title: "日勤は毎日3名以上配置"
+      description: "毎日、3名以上の日勤スタッフを配置する"
+
+    - id: "FR003"
+      rank: "A"
+      title: "月木のお風呂配置"
+      description: "月曜日・木曜日は日勤+2名配置+お風呂1名"
+
+    - id: "FR004"
+      rank: "B"
+      title: "1月の公休"
+      description: "1月の公休数は12日"
+      month: 1
+      days: 12
+
+    - id: "FR005"
+      rank: "A"
+      title: "2月の公休"
+      description: "2月の公休数は8日"
+      month: 2
+      days: 8
+
+    - id: "FR006"
+      rank: "A"
+      title: "3月～11月の公休"
+      description: "3月～11月の公休数は9日"
+      month: [3, 4, 5, 6, 7, 8, 9, 10, 11]
+      days: 9
+
+    - id: "FR007"
+      rank: "B"
+      title: "12月の公休"
+      description: "12月の公休数は11日"
+      month: 12
+      days: 11
+
+    - id: "FR008"
+      rank: "A"
+      title: "希望休申請上限"
+      description: "希望休は各月3日以内に限定"
+      max_requests: 3
+
+    - id: "FR009"
+      rank: "A"
+      title: "希望休は公休に含まれる"
+      description: "希望休は公休を指定できる制度なので日数としては公休数に含まれる"
+
+    - id: "FR010"
+      rank: "A"
+      title: "有給は別計"
+      description: "有給は公休・希望休とは別に取得するものなので公休数には含めない"
+
+    - id: "FR011"
+      rank: "A"
+      title: "日勤に介護士配置"
+      description: "日勤には1名以上の『介護士』が必ず配置されること"
+
+    - id: "FR012"
+      rank: "A"
+      title: "夜勤明けは必須"
+      description: "夜勤[夜]の次の日は必ず夜勤明け[明]とする"
+
+    - id: "FR013"
+      rank: "A"
+      title: "連続勤務の上限"
+      description: "日勤の連続勤務は最大6日とする"
+      max_consecutive_days: 6
+
+    - id: "FR014"
+      rank: "B"
+      title: "お風呂担当の配置"
+      description: "『お風呂担当』は月と木に1名以上配置する"
+      days: [1, 4]
+
+    - id: "FR015"
+      rank: "B"
+      title: "勤務日数の計算"
+      description: "月の日数 - 公休数の日数分勤務を割り当てる"
+
+    - id: "FR016"
+      rank: "C"
+      title: "介護士の勤務日数平均化"
+      description: "『介護士』の勤務日数を平均化する"
+
+  personal_rules:
+    - id: "PR001"
+      rank: "A"
+      staff_id: 1
+      staff_name: "山田志保里"
+      title: "夜勤不可"
+      description: "夜勤に入ることはできない"
+      constraint_type: "no_night_shift"
+
+    - id: "PR002"
+      rank: "A"
+      staff_id: 11
+      staff_name: "本庄正昇"
+      title: "夜勤不可"
+      description: "夜勤に入ることはできない"
+      constraint_type: "no_night_shift"
+
+    - id: "PR003"
+      rank: "A"
+      staff_id: 12
+      staff_name: "タンダ"
+      title: "夜勤不可"
+      description: "夜勤に入ることはできない"
+      constraint_type: "no_night_shift"
+
+    - id: "PR004"
+      rank: "A"
+      staff_id: 13
+      staff_name: "メイガー"
+      title: "夜勤不可"
+      description: "夜勤に入ることはできない"
+      constraint_type: "no_night_shift"
+
+    - id: "PR005"
+      rank: "B"
+      staff_id: 1
+      staff_name: "山田志保里"
+      title: "日曜日は固定休"
+      description: "日曜日は必ず休みとする"
+      constraint_type: "fixed_day_off"
+      day_of_week: 0
+
+    - id: "PR006"
+      rank: "A"
+      staff_id: 4
+      staff_name: "近藤由香利"
+      title: "夜勤回数上限"
+      description: "夜勤回数は月5回まで"
+      constraint_type: "max_night_shifts"
+      max_count: 5
+
+    - id: "PR007"
+      rank: "A"
+      staff_id: 9
+      staff_name: "ソー"
+      title: "夜勤回数上限"
+      description: "夜勤回数は月6回まで"
+      constraint_type: "max_night_shifts"
+      max_count: 6
+
+    - id: "PR008"
+      rank: "A"
+      staff_id: 10
+      staff_name: "田中賢輝"
+      title: "夜勤回数上限"
+      description: "夜勤回数は月6回まで"
+      constraint_type: "max_night_shifts"
+      max_count: 6
+
+    - id: "PR009"
+      rank: "A"
+      staff_id: 10
+      staff_name: "田中賢輝"
+      title: "夜勤明けは公休"
+      description: "夜勤明け[明]の次の日は必ず公休[休]とする"
+      constraint_type: "day_off_after_night_shift"
+
+  relationship_rules:
+    - id: "RR001"
+      rank: "A"
+      staff_ids: [10, 6]
+      staff_names: ["田中賢輝", "斎藤明音"]
+      title: "同日夜勤不可"
+      description: "この2名は同日に夜勤に入ることはできない"
+      constraint_type: "cannot_work_together"
+      shift_type: "夜"

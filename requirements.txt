@@ -1,0 +1,4 @@
+Flask==2.3.0
+ortools==9.8.3296
+PyYAML>=6.0.1
+Werkzeug==2.3.0

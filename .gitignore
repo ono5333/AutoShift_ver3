@@ -1,0 +1,24 @@
+__pycache__/
+*.pyc
+*.pyo
+venv/
+.env
+.DS_Store
+*.swp
+*.swo
+~*
+.vscode/
+.idea/
+*.log
+build/
+dist/
+*.egg-info/
+.pytest_cache/
+htmlcov/
+.coverage
+
+# Project specific
+data/*.xlsx
+data/*.csv
+*.backup.yml
+shifts_result_*.yml

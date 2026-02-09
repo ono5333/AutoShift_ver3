@@ -1,0 +1,892 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>希望休管理 - AutoShift</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            margin: 0;
+            padding: 0;
+            background: #f8f9fa;
+        }
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 20px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        .header h1 {
+            margin: 0;
+            font-size: 28px;
+        }
+        .header nav {
+            margin-top: 15px;
+        }
+        .header nav a {
+            color: white;
+            text-decoration: none;
+            margin-right: 20px;
+            padding: 8px 16px;
+            border-radius: 5px;
+            transition: background 0.3s;
+        }
+        .header nav a:hover {
+            background: rgba(255,255,255,0.2);
+        }
+        .header nav a.active {
+            background: rgba(255,255,255,0.3);
+        }
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 30px 20px;
+        }
+        .controls {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 30px;
+            gap: 20px;
+            flex-wrap: wrap;
+        }
+        .month-selector {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+        }
+        .month-selector select {
+            padding: 10px 15px;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+            font-size: 16px;
+        }
+        .btn {
+            padding: 12px 24px;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 16px;
+            transition: all 0.3s;
+            text-decoration: none;
+            display: inline-block;
+        }
+        .btn-primary {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(102,126,234,0.4);
+        }
+        .btn-secondary {
+            background: #6c757d;
+            color: white;
+        }
+        .btn-success {
+            background: #28a745;
+            color: white;
+        }
+        .btn-danger {
+            background: #dc3545;
+            color: white;
+        }
+        .btn-small {
+            padding: 6px 12px;
+            font-size: 14px;
+        }
+        .calendar-container {
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+            overflow: hidden;
+        }
+        .calendar-header {
+            padding: 20px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            text-align: center;
+        }
+        .calendar-header h2 {
+            margin: 0;
+            font-size: 24px;
+        }
+        .calendar-grid {
+            display: grid;
+            grid-template-columns: 120px repeat(31, 1fr);
+            min-width: 1200px;
+        }
+        .staff-header {
+            grid-column: 1;
+            background: #f8f9fa;
+            padding: 15px 10px;
+            border-bottom: 1px solid #dee2e6;
+            font-weight: bold;
+            text-align: center;
+        }
+        .day-header {
+            background: #e9ecef;
+            padding: 10px 5px;
+            text-align: center;
+            font-weight: bold;
+            font-size: 14px;
+            border-bottom: 1px solid #dee2e6;
+            border-left: 1px solid #dee2e6;
+        }
+        .staff-row {
+            display: contents;
+        }
+        .staff-name {
+            background: #f8f9fa;
+            padding: 15px 10px;
+            border-bottom: 1px solid #dee2e6;
+            font-weight: 500;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            text-align: center;
+        }
+        .staff-class {
+            font-size: 12px;
+            color: #666;
+            margin-top: 3px;
+        }
+        .calendar-cell {
+            min-height: 50px;
+            border-bottom: 1px solid #dee2e6;
+            border-left: 1px solid #dee2e6;
+            position: relative;
+            cursor: pointer;
+            transition: background 0.2s;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .calendar-cell:hover {
+            background: #f8f9fa;
+        }
+        .calendar-cell.has-request {
+            background: #fff3cd;
+        }
+        .calendar-cell.has-paid {
+            background: #d1ecf1;
+        }
+        .holiday-marker {
+            width: 30px;
+            height: 30px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 12px;
+            font-weight: bold;
+            color: white;
+        }
+        .holiday-marker.request {
+            background: #ffc107;
+        }
+        .holiday-marker.paid {
+            background: #17a2b8;
+        }
+        .legend {
+            display: flex;
+            gap: 20px;
+            justify-content: center;
+            padding: 15px;
+            background: #f8f9fa;
+            margin-bottom: 20px;
+        }
+        .legend-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .legend-color {
+            width: 20px;
+            height: 20px;
+            border-radius: 50%;
+        }
+        .legend-color.request {
+            background: #ffc107;
+        }
+        .legend-color.paid {
+            background: #17a2b8;
+        }
+        .summary-cards {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 20px;
+            margin: 30px 0;
+        }
+        .summary-card {
+            background: white;
+            padding: 20px;
+            border-radius: 12px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+            text-align: center;
+        }
+        .summary-card h3 {
+            margin: 0 0 10px 0;
+            color: #667eea;
+        }
+        .summary-card .number {
+            font-size: 36px;
+            font-weight: bold;
+            color: #333;
+        }
+        .modal {
+            display: none;
+            position: fixed;
+            z-index: 1000;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0,0,0,0.5);
+        }
+        .modal-content {
+            position: relative;
+            background: white;
+            margin: 10% auto;
+            padding: 0;
+            width: 90%;
+            max-width: 500px;
+            border-radius: 12px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.3);
+        }
+        .modal-header {
+            padding: 20px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border-radius: 12px 12px 0 0;
+        }
+        .modal-header h2 {
+            margin: 0;
+        }
+        .modal-body {
+            padding: 30px;
+        }
+        .modal-footer {
+            padding: 20px;
+            border-top: 1px solid #eee;
+            text-align: right;
+        }
+        .form-group {
+            margin-bottom: 20px;
+        }
+        .form-group label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: bold;
+            color: #333;
+        }
+        .form-group input,
+        .form-group select,
+        .form-group textarea {
+            width: 100%;
+            padding: 12px;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+            font-size: 16px;
+        }
+        .close {
+            position: absolute;
+            right: 20px;
+            top: 50%;
+            transform: translateY(-50%);
+            font-size: 24px;
+            cursor: pointer;
+            color: white;
+        }
+        .alert {
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+        }
+        .alert-success {
+            background: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+        .alert-error {
+            background: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+        .loading {
+            display: none;
+            text-align: center;
+            padding: 40px;
+        }
+        .spinner {
+            width: 40px;
+            height: 40px;
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #667eea;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin: 0 auto;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        .scroll-container {
+            overflow-x: auto;
+            padding: 20px 0;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>📅 AutoShift 希望休管理</h1>
+        <nav>
+            <a href="/">ホーム</a>
+            <a href="/facility_rules">ルール管理</a>
+            <a href="/request_holidays" class="active">希望休管理</a>
+            <a href="/shift_display">シフト表示</a>
+        </nav>
+    </div>
+
+    <div class="container">
+        <!-- アラート表示エリア -->
+        <div id="alert-area"></div>
+
+        <!-- コントロールバー -->
+        <div class="controls">
+            <div class="month-selector">
+                <label for="month-select"><strong>対象月:</strong></label>
+                <select id="month-select">
+                    <option value="2026-01">2026年1月</option>
+                    <option value="2026-02" selected>2026年2月</option>
+                    <option value="2026-03">2026年3月</option>
+                    <option value="2026-04">2026年4月</option>
+                    <option value="2026-05">2026年5月</option>
+                    <option value="2026-06">2026年6月</option>
+                    <option value="2026-07">2026年7月</option>
+                    <option value="2026-08">2026年8月</option>
+                    <option value="2026-09">2026年9月</option>
+                    <option value="2026-10">2026年10月</option>
+                    <option value="2026-11">2026年11月</option>
+                    <option value="2026-12">2026年12月</option>
+                </select>
+            </div>
+            <div>
+                <button class="btn btn-primary" onclick="openAddModal()">
+                    ➕ 希望休追加
+                </button>
+                <button class="btn btn-secondary" onclick="refreshCalendar()">
+                    🔄 更新
+                </button>
+                <button class="btn btn-success" onclick="exportData()">
+                    📤 エクスポート
+                </button>
+            </div>
+        </div>
+
+        <!-- 統計カード -->
+        <div id="summary-cards" class="summary-cards">
+            <!-- JavaScriptで動的に生成 -->
+        </div>
+
+        <!-- 凡例 -->
+        <div class="legend">
+            <div class="legend-item">
+                <div class="legend-color request"></div>
+                <span>希望休</span>
+            </div>
+            <div class="legend-item">
+                <div class="legend-color paid"></div>
+                <span>有給</span>
+            </div>
+        </div>
+
+        <!-- ローディング表示 -->
+        <div id="loading" class="loading">
+            <div class="spinner"></div>
+            <p>カレンダーを読み込み中...</p>
+        </div>
+
+        <!-- カレンダー -->
+        <div id="calendar-container" class="calendar-container" style="display: none;">
+            <div class="calendar-header">
+                <h2 id="calendar-title">2026年2月</h2>
+            </div>
+            <div class="scroll-container">
+                <div id="calendar-grid" class="calendar-grid">
+                    <!-- JavaScriptで動的に生成 -->
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 希望休追加モーダル -->
+    <div id="holiday-modal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2 id="modal-title">希望休追加</h2>
+                <span class="close" onclick="closeModal()">&times;</span>
+            </div>
+            <div class="modal-body">
+                <form id="holiday-form">
+                    <div class="form-group">
+                        <label for="staff-select">スタッフ *</label>
+                        <select id="staff-select" name="staff_id" required>
+                            <option value="">選択してください</option>
+                            <!-- JavaScriptで動的に生成 -->
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label for="date-input">日付 *</label>
+                        <input type="date" id="date-input" name="date" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="type-select">種類 *</label>
+                        <select id="type-select" name="type" required>
+                            <option value="">選択してください</option>
+                            <option value="希">希望休</option>
+                            <option value="有">有給</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label for="reason-input">理由</label>
+                        <textarea id="reason-input" name="reason" placeholder="必要に応じて理由を入力してください"></textarea>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" onclick="closeModal()">
+                    キャンセル
+                </button>
+                <button type="button" class="btn btn-primary" onclick="saveHoliday()">
+                    保存
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let currentMonth = '2026-02';
+        let staffList = [];
+        let calendarData = null;
+
+        // ページ読み込み時の初期化
+        document.addEventListener('DOMContentLoaded', function() {
+            loadStaffList();
+            loadCalendar();
+            setupMonthSelector();
+        });
+
+        // スタッフ一覧読み込み
+        async function loadStaffList() {
+            try {
+                const response = await fetch('/api/holidays/staff');
+                const result = await response.json();
+                
+                if (result.status === 'success') {
+                    staffList = result.data;
+                    updateStaffSelect();
+                } else {
+                    showAlert('error', result.message || 'スタッフ一覧の読み込みに失敗しました');
+                }
+            } catch (error) {
+                showAlert('error', `エラーが発生しました: ${error.message}`);
+            }
+        }
+
+        // カレンダー読み込み
+        async function loadCalendar() {
+            showLoading(true);
+            try {
+                const response = await fetch(`/api/holidays/calendar/${currentMonth}`);
+                const result = await response.json();
+                
+                if (result.status === 'success') {
+                    calendarData = result.data;
+                    displayCalendar();
+                    updateSummary();
+                } else {
+                    showAlert('error', result.message || 'カレンダーの読み込みに失敗しました');
+                }
+            } catch (error) {
+                showAlert('error', `エラーが発生しました: ${error.message}`);
+            } finally {
+                showLoading(false);
+            }
+        }
+
+        // カレンダー表示
+        function displayCalendar() {
+            const calendarGrid = document.getElementById('calendar-grid');
+            const calendarTitle = document.getElementById('calendar-title');
+            
+            calendarTitle.textContent = `${calendarData.year}年${calendarData.month}月`;
+            
+            // グリッドのカラム数を動的に設定
+            calendarGrid.style.gridTemplateColumns = `120px repeat(${calendarData.days_in_month}, 1fr)`;
+            
+            // グリッドクリア
+            calendarGrid.innerHTML = '';
+            
+            // ヘッダー行
+            const staffHeader = document.createElement('div');
+            staffHeader.className = 'staff-header';
+            staffHeader.textContent = 'スタッフ';
+            calendarGrid.appendChild(staffHeader);
+            
+            // 日付ヘッダー
+            for (let day = 1; day <= calendarData.days_in_month; day++) {
+                const dayHeader = document.createElement('div');
+                dayHeader.className = 'day-header';
+                dayHeader.textContent = day;
+                calendarGrid.appendChild(dayHeader);
+            }
+            
+            // スタッフ行
+            calendarData.staff.forEach(staff => {
+                // スタッフ名
+                const staffName = document.createElement('div');
+                staffName.className = 'staff-name';
+                staffName.innerHTML = `
+                    <div>${staff.name}</div>
+                    <div class="staff-class">${staff.staff_class}</div>
+                `;
+                calendarGrid.appendChild(staffName);
+                
+                // 日付セル
+                for (let day = 1; day <= calendarData.days_in_month; day++) {
+                    const cell = document.createElement('div');
+                    cell.className = 'calendar-cell';
+                    cell.dataset.staffId = staff.id;
+                    cell.dataset.day = day;
+                    cell.onclick = () => toggleCellState(staff.id, day, cell);
+                    
+                    // 希望休チェック
+                    const staffHolidays = calendarData.holidays[staff.id];
+                    if (staffHolidays && staffHolidays[day]) {
+                        const holiday = staffHolidays[day];
+                        const marker = document.createElement('div');
+                        marker.className = `holiday-marker ${holiday.type === '希' ? 'request' : 'paid'}`;
+                        marker.textContent = holiday.type === '希' ? '希' : '有';
+                        marker.title = holiday.reason || (holiday.type === '希' ? '希望休' : '有給');
+                        cell.appendChild(marker);
+                        cell.classList.add(holiday.type === '希' ? 'has-request' : 'has-paid');
+                    }
+                    
+                    calendarGrid.appendChild(cell);
+                }
+            });
+        }
+
+        // 統計更新
+        function updateSummary() {
+            const summaryContainer = document.getElementById('summary-cards');
+            
+            let requestCount = 0;
+            let paidCount = 0;
+            let staffWithHolidays = 0;
+            
+            const staffHolidayCount = {};
+            
+            for (const [staffId, holidays] of Object.entries(calendarData.holidays)) {
+                let hasHoliday = false;
+                for (const [day, holiday] of Object.entries(holidays)) {
+                    if (holiday.type === '希') {
+                        requestCount++;
+                    } else if (holiday.type === '有') {
+                        paidCount++;
+                    }
+                    hasHoliday = true;
+                }
+                if (hasHoliday) {
+                    staffWithHolidays++;
+                    staffHolidayCount[staffId] = Object.keys(holidays).length;
+                }
+            }
+            
+            summaryContainer.innerHTML = `
+                <div class="summary-card">
+                    <h3>希望休</h3>
+                    <div class="number">${requestCount}</div>
+                </div>
+                <div class="summary-card">
+                    <h3>有給</h3>
+                    <div class="number">${paidCount}</div>
+                </div>
+                <div class="summary-card">
+                    <h3>申請スタッフ</h3>
+                    <div class="number">${staffWithHolidays}</div>
+                </div>
+                <div class="summary-card">
+                    <h3>合計</h3>
+                    <div class="number">${requestCount + paidCount}</div>
+                </div>
+            `;
+        }
+
+        // セル状態切り替え (空白→希→有→空白)
+        async function toggleCellState(staffId, day, cell) {
+            try {
+                // 現在の状態を取得
+                const currentHoliday = calendarData.holidays[staffId] && calendarData.holidays[staffId][day];
+                const currentType = currentHoliday ? currentHoliday.type : null;
+                
+                const [year, month] = currentMonth.split('-');
+                const dateStr = `${year}-${month}-${day.toString().padStart(2, '0')}`;
+                
+                let nextType;
+                
+                // 状態遷移: 空白 → 希 → 有 → 空白
+                if (!currentType) {
+                    // 空白 → 希
+                    nextType = '希';
+                    await addHolidayRequest(staffId, dateStr, nextType);
+                } else if (currentType === '希') {
+                    // 希 → 有
+                    nextType = '有';
+                    await deleteHolidayRequest(staffId, dateStr);
+                    await addHolidayRequest(staffId, dateStr, nextType);
+                } else if (currentType === '有') {
+                    // 有 → 空白
+                    await deleteHolidayRequest(staffId, dateStr);
+                    nextType = null;
+                }
+                
+                // UIを更新
+                updateCellDisplay(cell, staffId, day, nextType);
+                updateSummary();
+                
+            } catch (error) {
+                showAlert('error', `状態変更に失敗しました: ${error.message}`);
+            }
+        }
+
+        // 希望休追加API呼び出し
+        async function addHolidayRequest(staffId, dateStr, type) {
+            const response = await fetch(`/api/holidays/request/${currentMonth}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    staff_id: staffId,
+                    date: dateStr,
+                    type: type,
+                    reason: ''
+                })
+            });
+
+            const result = await response.json();
+            if (result.status !== 'success') {
+                throw new Error(result.message);
+            }
+        }
+
+        // 希望休削除API呼び出し
+        async function deleteHolidayRequest(staffId, dateStr) {
+            const response = await fetch(`/api/holidays/request/${currentMonth}/${staffId}/${dateStr}`, {
+                method: 'DELETE'
+            });
+
+            const result = await response.json();
+            if (result.status !== 'success') {
+                throw new Error(result.message);
+            }
+        }
+
+        // セル表示更新
+        function updateCellDisplay(cell, staffId, day, type) {
+            // セルをクリア
+            cell.innerHTML = '';
+            cell.className = 'calendar-cell';
+            
+            // calendarDataを更新
+            if (!calendarData.holidays[staffId]) {
+                calendarData.holidays[staffId] = {};
+            }
+            
+            if (type) {
+                // 新しい状態を設定
+                calendarData.holidays[staffId][day] = {
+                    type: type,
+                    reason: ''
+                };
+                
+                // マーカーを追加
+                const marker = document.createElement('div');
+                marker.className = `holiday-marker ${type === '希' ? 'request' : 'paid'}`;
+                marker.textContent = type === '希' ? '希' : '有';
+                marker.title = type === '希' ? '希望休' : '有給';
+                cell.appendChild(marker);
+                cell.classList.add(type === '希' ? 'has-request' : 'has-paid');
+            } else {
+                // 空白状態に設定
+                delete calendarData.holidays[staffId][day];
+                if (Object.keys(calendarData.holidays[staffId]).length === 0) {
+                    delete calendarData.holidays[staffId];
+                }
+            }
+        }
+
+        // スタッフ選択肢更新
+        function updateStaffSelect() {
+            const staffSelect = document.getElementById('staff-select');
+            staffSelect.innerHTML = '<option value="">選択してください</option>';
+            
+            staffList.forEach(staff => {
+                const option = document.createElement('option');
+                option.value = staff.id;
+                option.textContent = `${staff.name} (${staff.staff_class})`;
+                staffSelect.appendChild(option);
+            });
+        }
+
+        // 月選択設定
+        function setupMonthSelector() {
+            const monthSelect = document.getElementById('month-select');
+            monthSelect.addEventListener('change', function() {
+                currentMonth = this.value;
+                loadCalendar();
+                updateDateInputRange();
+            });
+            updateDateInputRange();
+        }
+
+        // 日付入力範囲更新
+        function updateDateInputRange() {
+            const dateInput = document.getElementById('date-input');
+            const [year, month] = currentMonth.split('-');
+            const firstDay = `${year}-${month}-01`;
+            const lastDay = `${year}-${month}-${new Date(year, month, 0).getDate()}`;
+            
+            dateInput.min = firstDay;
+            dateInput.max = lastDay;
+            dateInput.value = firstDay;
+        }
+
+        // セルクリック時のモーダル
+        function openCellModal(staffId, day) {
+            const staff = staffList.find(s => s.id === staffId);
+            const [year, month] = currentMonth.split('-');
+            const date = `${year}-${month}-${day.toString().padStart(2, '0')}`;
+            
+            document.getElementById('staff-select').value = staffId;
+            document.getElementById('date-input').value = date;
+            
+            // 既存の希望休チェック
+            const staffHolidays = calendarData.holidays[staffId];
+            if (staffHolidays && staffHolidays[day]) {
+                const holiday = staffHolidays[day];
+                document.getElementById('type-select').value = holiday.type;
+                document.getElementById('reason-input').value = holiday.reason || '';
+                document.getElementById('modal-title').textContent = `希望休編集 - ${staff.name}`;
+            } else {
+                document.getElementById('type-select').value = '';
+                document.getElementById('reason-input').value = '';
+                document.getElementById('modal-title').textContent = `希望休追加 - ${staff.name}`;
+            }
+            
+            document.getElementById('holiday-modal').style.display = 'block';
+        }
+
+        // 追加モーダルを開く
+        function openAddModal() {
+            document.getElementById('modal-title').textContent = '希望休追加';
+            document.getElementById('holiday-form').reset();
+            updateDateInputRange();
+            document.getElementById('holiday-modal').style.display = 'block';
+        }
+
+        // モーダルを閉じる
+        function closeModal() {
+            document.getElementById('holiday-modal').style.display = 'none';
+        }
+
+        // 希望休保存
+        async function saveHoliday() {
+            const form = document.getElementById('holiday-form');
+            if (!form.checkValidity()) {
+                form.reportValidity();
+                return;
+            }
+
+            const formData = new FormData(form);
+            const holidayData = {
+                staff_id: parseInt(formData.get('staff_id')),
+                date: formData.get('date'),
+                type: formData.get('type'),
+                reason: formData.get('reason') || ''
+            };
+
+            try {
+                const response = await fetch(`/api/holidays/request/${currentMonth}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(holidayData)
+                });
+
+                const result = await response.json();
+                if (result.status === 'success') {
+                    showAlert('success', result.message);
+                    closeModal();
+                    loadCalendar();
+                } else {
+                    showAlert('error', result.message);
+                }
+            } catch (error) {
+                showAlert('error', `エラーが発生しました: ${error.message}`);
+            }
+        }
+
+        // カレンダー更新
+        function refreshCalendar() {
+            loadCalendar();
+        }
+
+        // エクスポート
+        function exportData() {
+            const data = {
+                month: currentMonth,
+                calendar: calendarData
+            };
+            
+            const blob = new Blob([JSON.stringify(data, null, 2)], {type: 'application/json'});
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `holidays_${currentMonth}.json`;
+            a.click();
+            URL.revokeObjectURL(url);
+        }
+
+        // アラート表示
+        function showAlert(type, message) {
+            const alertArea = document.getElementById('alert-area');
+            const alertDiv = document.createElement('div');
+            alertDiv.className = `alert alert-${type}`;
+            alertDiv.textContent = message;
+            
+            alertArea.innerHTML = '';
+            alertArea.appendChild(alertDiv);
+            
+            setTimeout(() => {
+                alertDiv.style.opacity = '0';
+                setTimeout(() => alertDiv.remove(), 300);
+            }, 5000);
+        }
+
+        // ローディング表示
+        function showLoading(show) {
+            document.getElementById('loading').style.display = show ? 'block' : 'none';
+            document.getElementById('calendar-container').style.display = show ? 'none' : 'block';
+        }
+
+        // モーダル外クリックで閉じる
+        window.onclick = function(event) {
+            const modal = document.getElementById('holiday-modal');
+            if (event.target === modal) {
+                closeModal();
+            }
+        }
+    </script>
+</body>
+</html>
