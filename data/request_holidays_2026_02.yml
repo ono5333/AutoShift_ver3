@@ -1,0 +1,131 @@
+month: 2026-02
+staff_requests:
+- staff_id: 1
+  staff_name: 山田志保里
+  requests:
+  - date: '2026-02-04'
+    type: 有
+  - date: '2026-02-07'
+    type: 希
+  - date: '2026-02-25'
+    type: 希
+- staff_id: 2
+  staff_name: 佐藤美幸
+  requests:
+  - date: '2026-02-01'
+    type: 有
+  - date: '2026-02-22'
+    type: 有
+  - date: '2026-02-23'
+    type: 有
+- staff_id: 3
+  staff_name: 田中茂子
+  requests:
+  - date: '2026-02-03'
+    type: 有
+  - date: '2026-02-11'
+    type: 有
+  - date: '2026-02-14'
+    type: 有
+- staff_id: 4
+  staff_name: 近藤由香利
+  requests:
+  - date: '2026-02-06'
+    type: 有
+  - date: '2026-02-26'
+    type: 有
+- staff_id: 5
+  staff_name: 福島瑞穂
+  requests:
+  - date: '2026-02-07'
+    type: 有
+  - date: '2026-02-22'
+    type: 希
+  - date: '2026-02-23'
+    type: 希
+- staff_id: 6
+  staff_name: 斎藤明音
+  requests:
+  - date: '2026-02-05'
+    type: 希
+  - date: '2026-02-06'
+    type: 希
+  - date: '2026-02-20'
+    type: 有
+- staff_id: 7
+  staff_name: 是枝久枝
+  requests:
+  - date: '2026-02-05'
+    type: 有
+  - date: '2026-02-14'
+    type: 希
+  - date: '2026-02-15'
+    type: 希
+- staff_id: 8
+  staff_name: 木村洋二
+  requests:
+  - date: '2026-02-10'
+    type: 希
+  - date: '2026-02-18'
+    type: 有
+  - date: '2026-02-19'
+    type: 有
+- staff_id: 9
+  staff_name: ソー
+  requests:
+  - date: '2026-02-09'
+    type: 希
+  - date: '2026-02-10'
+    type: 有
+  - date: '2026-02-21'
+    type: 希
+- staff_id: 10
+  staff_name: 田中賢輝
+  requests:
+  - date: '2026-02-05'
+    type: 希
+  - date: '2026-02-06'
+    type: 有
+  - date: '2026-02-17'
+    type: 有
+- staff_id: 11
+  staff_name: 本庄正昇
+  requests: []
+- staff_id: 12
+  staff_name: タンダ
+  requests:
+  - date: '2026-02-07'
+    type: 希
+  - date: '2026-02-08'
+    type: 希
+  - date: '2026-02-21'
+    type: 希
+- staff_id: 13
+  staff_name: メイガー
+  requests:
+  - date: '2026-02-07'
+    type: 希
+  - date: '2026-02-08'
+    type: 希
+  - date: '2026-02-21'
+    type: 希
+- staff_id: 14
+  staff_name: 大野正恵
+  requests:
+  - date: '2026-02-24'
+    type: 有
+  - date: '2026-02-25'
+    type: 希
+  - date: '2026-02-26'
+    type: 有
+  - date: '2026-02-27'
+    type: 有
+- staff_id: 15
+  staff_name: 大上迫
+  requests:
+  - date: '2026-02-05'
+    type: 希
+  - date: '2026-02-09'
+    type: 希
+  - date: '2026-02-16'
+    type: 希
