@@ -103,11 +103,15 @@ def load_rules(path: str) -> Dict[str, Any]:
             
         if not isinstance(data, dict):
             raise ValueError(f"Invalid YAML format in {path}: expected dict, got {type(data)}")
-            
-        if 'rules' not in data:
-            raise KeyError("YAMLファイルに'rules'キーがありません")
-            
-        rules = data['rules']
+        
+        # 新しいYAML構造に対応：直接トップレベルにルールカテゴリがある
+        # 古い構造との互換性も保つ
+        if 'rules' in data:
+            # 古い構造: rules -> facility_rules, etc.
+            rules = data['rules']
+        else:
+            # 新しい構造: 直接 facility_rules, etc.
+            rules = data
         
         # デフォルト値設定
         result = {

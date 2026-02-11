@@ -1,0 +1,699 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>スタッフ管理 - AutoShift</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            margin: 0;
+            padding: 0;
+            background: #f8f9fa;
+        }
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 20px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        .header h1 {
+            margin: 0;
+            font-size: 28px;
+        }
+        .header nav {
+            margin-top: 15px;
+        }
+        .header nav a {
+            color: white;
+            text-decoration: none;
+            margin-right: 20px;
+            padding: 8px 16px;
+            border-radius: 5px;
+            transition: background 0.3s;
+        }
+        .header nav a:hover {
+            background: rgba(255,255,255,0.2);
+        }
+        .header nav a.active {
+            background: rgba(255,255,255,0.3);
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 30px 20px;
+        }
+        .controls {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 30px;
+            flex-wrap: wrap;
+            gap: 15px;
+        }
+        .search-filters {
+            display: flex;
+            gap: 15px;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+        .search-input {
+            padding: 10px 15px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            font-size: 14px;
+            min-width: 200px;
+        }
+        .filter-select {
+            padding: 10px 15px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            font-size: 14px;
+            background: white;
+        }
+        .btn {
+            background: #667eea;
+            color: white;
+            border: none;
+            padding: 12px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: all 0.3s;
+            text-decoration: none;
+            display: inline-block;
+        }
+        .btn:hover {
+            background: #5a6fd8;
+            transform: translateY(-1px);
+        }
+        .btn-success {
+            background: #28a745;
+        }
+        .btn-success:hover {
+            background: #218838;
+        }
+        .btn-danger {
+            background: #dc3545;
+        }
+        .btn-danger:hover {
+            background: #c82333;
+        }
+        .btn-sm {
+            padding: 6px 12px;
+            font-size: 12px;
+        }
+        .staff-table {
+            background: white;
+            border-radius: 8px;
+            overflow: hidden;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        .staff-table table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+        .staff-table th {
+            background: #f8f9fa;
+            padding: 15px;
+            text-align: left;
+            font-weight: 600;
+            color: #495057;
+            border-bottom: 2px solid #dee2e6;
+        }
+        .staff-table td {
+            padding: 15px;
+            border-bottom: 1px solid #dee2e6;
+            vertical-align: middle;
+        }
+        .staff-table tbody tr:hover {
+            background: #f8f9fa;
+        }
+        .badge {
+            display: inline-block;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 12px;
+            font-weight: 500;
+        }
+        .badge-caregiver {
+            background: #e3f2eb;
+            color: #28a745;
+        }
+        .badge-junior {
+            background: #fff3cd;
+            color: #856404;
+        }
+        .badge-bath {
+            background: #cce5f7;
+            color: #0056b3;
+        }
+        .status-active {
+            color: #28a745;
+            font-weight: 500;
+        }
+        .status-inactive {
+            color: #6c757d;
+            font-weight: 500;
+        }
+        .actions {
+            display: flex;
+            gap: 5px;
+        }
+        .alert {
+            padding: 15px;
+            border-radius: 5px;
+            margin-bottom: 20px;
+            border-left: 4px solid;
+        }
+        .alert-success {
+            background: #d4edda;
+            color: #155724;
+            border-color: #28a745;
+        }
+        .alert-error {
+            background: #f8d7da;
+            color: #721c24;
+            border-color: #dc3545;
+        }
+        .alert-info {
+            background: #cce5f7;
+            color: #0c5460;
+            border-color: #17a2b8;
+        }
+        .modal {
+            display: none;
+            background: rgba(0,0,0,0.5);
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 1000;
+            align-items: center;
+            justify-content: center;
+        }
+        .modal.show {
+            display: flex;
+        }
+        .modal-content {
+            background: white;
+            padding: 30px;
+            border-radius: 8px;
+            max-width: 500px;
+            width: 90%;
+            max-height: 80vh;
+            overflow-y: auto;
+        }
+        .modal-header {
+            display: flex;
+            justify-content: between;
+            align-items: center;
+            margin-bottom: 20px;
+            border-bottom: 1px solid #dee2e6;
+            padding-bottom: 15px;
+        }
+        .modal-title {
+            font-size: 20px;
+            font-weight: 600;
+            margin: 0;
+        }
+        .modal-close {
+            background: none;
+            border: none;
+            font-size: 24px;
+            cursor: pointer;
+            color: #6c757d;
+            margin-left: auto;
+        }
+        .form-group {
+            margin-bottom: 20px;
+        }
+        .form-group label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: 500;
+            color: #495057;
+        }
+        .form-group input,
+        .form-group select {
+            width: 100%;
+            padding: 10px 12px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            font-size: 14px;
+        }
+        .form-group input:focus,
+        .form-group select:focus {
+            outline: none;
+            border-color: #667eea;
+            box-shadow: 0 0 0 2px rgba(102, 126, 234, 0.25);
+        }
+        .required {
+            color: #dc3545;
+        }
+        .form-actions {
+            display: flex;
+            gap: 10px;
+            justify-content: flex-end;
+            margin-top: 30px;
+        }
+        .loading {
+            text-align: center;
+            padding: 50px;
+            color: #6c757d;
+        }
+        .empty-state {
+            text-align: center;
+            padding: 60px 20px;
+            color: #6c757d;
+        }
+        .empty-state h3 {
+            margin-bottom: 10px;
+        }
+        @media (max-width: 768px) {
+            .controls {
+                flex-direction: column;
+                align-items: stretch;
+            }
+            .search-filters {
+                flex-direction: column;
+            }
+            .search-input {
+                min-width: auto;
+            }
+            .staff-table {
+                overflow-x: auto;
+            }
+            .staff-table table {
+                min-width: 600px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>👥 AutoShift スタッフ管理</h1>
+        <nav>
+            <a href="/">ホーム</a>
+            <a href="/staff_management" class="active">スタッフ管理</a>
+            <a href="/facility_rules">ルール管理</a>
+            <a href="/request_holidays">希望休管理</a>
+            <a href="/shift_display">シフト表示</a>
+        </nav>
+    </div>
+
+    <div class="container">
+        <!-- アラート表示エリア -->
+        <div id="alert-area"></div>
+
+        <!-- コントロールバー -->
+        <div class="controls">
+            <div class="search-filters">
+                <input type="search" 
+                       id="search-input" 
+                       class="search-input" 
+                       placeholder="🔍 スタッフ名で検索">
+                       
+                <select id="class-filter" class="filter-select">
+                    <option value="">全職種</option>
+                    <option value="介護士">介護士</option>
+                    <option value="初級介護士">初級介護士</option>
+                    <option value="お風呂">お風呂</option>
+                </select>
+                
+                <select id="status-filter" class="filter-select">
+                    <option value="">全状況</option>
+                    <option value="active">在籍中</option>
+                    <option value="inactive">退職済み</option>
+                </select>
+            </div>
+            
+            <div class="actions">
+                <button class="btn btn-success" onclick="openStaffModal()">
+                    ➕ 新規スタッフ追加
+                </button>
+            </div>
+        </div>
+
+        <!-- スタッフ一覧テーブル -->
+        <div id="staff-table-container">
+            <div class="loading" id="loading-indicator">
+                <p>📋 スタッフ一覧を読み込み中...</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- スタッフ追加/編集モーダル -->
+    <div id="staff-modal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2 class="modal-title" id="modal-title">新規スタッフ追加</h2>
+                <button class="modal-close" onclick="closeStaffModal()">×</button>
+            </div>
+            
+            <form id="staff-form">
+                <div class="form-group">
+                    <label for="staff-name">
+                        スタッフ名 <span class="required">*</span>
+                    </label>
+                    <input type="text" 
+                           id="staff-name" 
+                           name="name" 
+                           required 
+                           maxlength="20"
+                           placeholder="例: 田中花子">
+                </div>
+                
+                <div class="form-group">
+                    <label for="staff-class">
+                        職種 <span class="required">*</span>
+                    </label>
+                    <select id="staff-class" name="class" required>
+                        <option value="">選択してください</option>
+                        <option value="介護士">介護士</option>
+                        <option value="初級介護士">初級介護士</option>
+                        <option value="お風呂">お風呂</option>
+                    </select>
+                </div>
+                
+                <div class="form-actions">
+                    <button type="button" class="btn" onclick="closeStaffModal()">
+                        ❌ キャンセル
+                    </button>
+                    <button type="submit" class="btn btn-success">
+                        💾 保存
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <script>
+        // グローバル変数
+        let staffList = [];
+        let currentEditingId = null;
+
+        // 初期化
+        document.addEventListener('DOMContentLoaded', function() {
+            loadStaffList();
+            
+            // 検索・フィルタのイベントリスナー
+            document.getElementById('search-input').addEventListener('input', filterStaffList);
+            document.getElementById('class-filter').addEventListener('change', filterStaffList);
+            document.getElementById('status-filter').addEventListener('change', filterStaffList);
+            
+            // フォームsubmitイベント
+            document.getElementById('staff-form').addEventListener('submit', handleStaffSubmit);
+        });
+
+        // スタッフ一覧読み込み
+        async function loadStaffList() {
+            const loadingIndicator = document.getElementById('loading-indicator');
+            if (loadingIndicator) {
+                loadingIndicator.style.display = 'block';
+            }
+            console.log('スタッフ一覧を読み込み中...');
+            
+            try {
+                const response = await fetch('/api/staff');
+                const data = await response.json();
+                
+                if (data.status === 'success') {
+                    staffList = data.data.staff;
+                    renderStaffTable();
+                    console.log('スタッフ一覧読み込み完了:', staffList.length, '件');
+                } else {
+                    showAlert('error', data.message || 'スタッフ一覧の読み込みに失敗しました');
+                }
+            } catch (error) {
+                console.error('スタッフ一覧読み込みエラー:', error);
+                showAlert('error', 'サーバーエラーが発生しました');
+            } finally {
+                if (loadingIndicator) {
+                    loadingIndicator.style.display = 'none';
+                }
+            }
+        }
+
+        // スタッフテーブル描画
+        function renderStaffTable(filteredList = null) {
+            const displayList = filteredList || staffList;
+            const container = document.getElementById('staff-table-container');
+            console.log('テーブル描画:', displayList.length, '件表示');
+            
+            // ローディングインジケーターを保持
+            const loadingIndicator = document.getElementById('loading-indicator');
+            
+            if (displayList.length === 0) {
+                container.innerHTML = `
+                    <div class="loading" id="loading-indicator" style="display: none;">
+                        <p>📋 スタッフ一覧を読み込み中...</p>
+                    </div>
+                    <div class="empty-state">
+                        <h3>👥 スタッフが登録されていません</h3>
+                        <p>「新規スタッフ追加」ボタンから最初のスタッフを登録してください</p>
+                    </div>
+                `;
+                return;
+            }
+            
+            const tableHTML = `
+                <div class="loading" id="loading-indicator" style="display: none;">
+                    <p>📋 スタッフ一覧を読み込み中...</p>
+                </div>
+                <div class="staff-table">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>ID</th>
+                                <th>名前</th>
+                                <th>職種</th>
+                                <th>状態</th>
+                                <th>アクション</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${displayList.map(staff => `
+                                <tr>
+                                    <td>${staff.id}</td>
+                                    <td>${staff.name}</td>
+                                    <td>
+                                        <span class="badge ${getBadgeClass(staff.class)}">
+                                            ${staff.class}
+                                        </span>
+                                    </td>
+                                    <td>
+                                        <span class="status-active">在籍中</span>
+                                    </td>
+                                    <td>
+                                        <div class="actions">
+                                            <button class="btn btn-sm" 
+                                                    onclick="editStaff(${staff.id})"
+                                                    title="編集">
+                                                ✏️
+                                            </button>
+                                            <button class="btn btn-danger btn-sm" 
+                                                    onclick="deleteStaff(${staff.id})"
+                                                    title="削除">
+                                                🗑️
+                                            </button>
+                                        </div>
+                                    </td>
+                                </tr>
+                            `).join('')}
+                        </tbody>
+                    </table>
+                </div>
+            `;
+            
+            container.innerHTML = tableHTML;
+        }
+
+        // バッジクラス取得
+        function getBadgeClass(staffClass) {
+            switch (staffClass) {
+                case '介護士': return 'badge-caregiver';
+                case '初級介護士': return 'badge-junior';
+                case 'お風呂': return 'badge-bath';
+                default: return 'badge-caregiver';
+            }
+        }
+
+        // フィルタ機能
+        function filterStaffList() {
+            const searchTerm = document.getElementById('search-input').value.toLowerCase();
+            const classFilter = document.getElementById('class-filter').value;
+            const statusFilter = document.getElementById('status-filter').value;
+            
+            let filtered = staffList;
+            
+            // 名前検索
+            if (searchTerm) {
+                filtered = filtered.filter(staff => 
+                    staff.name.toLowerCase().includes(searchTerm)
+                );
+            }
+            
+            // 職種フィルタ
+            if (classFilter) {
+                filtered = filtered.filter(staff => staff.class === classFilter);
+            }
+            
+            // 状況フィルタ（現在は全て在籍中として扱う）
+            if (statusFilter === 'active') {
+                filtered = filtered.filter(staff => staff.active !== false);
+            } else if (statusFilter === 'inactive') {
+                filtered = filtered.filter(staff => staff.active === false);
+            }
+            
+            renderStaffTable(filtered);
+        }
+
+        // フィルタクリア機能
+        function clearFilters() {
+            document.getElementById('search-input').value = '';
+            document.getElementById('class-filter').value = '';
+            document.getElementById('status-filter').value = '';
+        }
+
+        // スタッフモーダル開閉
+        function openStaffModal(editId = null) {
+            const modal = document.getElementById('staff-modal');
+            const title = document.getElementById('modal-title');
+            const form = document.getElementById('staff-form');
+            
+            currentEditingId = editId;
+            
+            if (editId) {
+                // 編集モード
+                const staff = staffList.find(s => s.id === editId);
+                if (staff) {
+                    title.textContent = 'スタッフ情報編集';
+                    form.name.value = staff.name;
+                    form.class.value = staff.class;
+                }
+            } else {
+                // 新規追加モード
+                title.textContent = '新規スタッフ追加';
+                form.reset();
+            }
+            
+            modal.classList.add('show');
+        }
+
+        function closeStaffModal() {
+            document.getElementById('staff-modal').classList.remove('show');
+            currentEditingId = null;
+        }
+
+        // フォーム送信処理
+        async function handleStaffSubmit(event) {
+            event.preventDefault();
+            
+            const formData = new FormData(event.target);
+            const data = {
+                name: formData.get('name').trim(),
+                class: formData.get('class')
+            };
+            
+            if (!data.name || !data.class) {
+                showAlert('error', '名前と職種を入力してください');
+                return;
+            }
+            
+            try {
+                let response;
+                if (currentEditingId) {
+                    // 更新
+                    response = await fetch(`/api/staff/${currentEditingId}`, {
+                        method: 'PUT',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(data)
+                    });
+                } else {
+                    // 新規作成
+                    response = await fetch('/api/staff', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(data)
+                    });
+                }
+                
+                const result = await response.json();
+                
+                if (result.status === 'success') {
+                    showAlert('success', result.message);
+                    closeStaffModal();
+                    // フィルタをクリアしてから一覧を再読み込み
+                    clearFilters();
+                    await loadStaffList(); // 一覧を再読み込み
+                    console.log('スタッフ一覧を更新しました');
+                } else {
+                    showAlert('error', result.message || '保存に失敗しました');
+                }
+            } catch (error) {
+                console.error('スタッフ保存エラー:', error);
+                showAlert('error', 'サーバーエラーが発生しました');
+            }
+        }
+
+        // スタッフ編集
+        function editStaff(staffId) {
+            openStaffModal(staffId);
+        }
+
+        // スタッフ削除
+        async function deleteStaff(staffId) {
+            const staff = staffList.find(s => s.id === staffId);
+            if (!staff) return;
+            
+            if (!confirm(`スタッフ「${staff.name}」を削除しますか？\n\n※この操作は取り消せません`)) {
+                return;
+            }
+            
+            try {
+                const response = await fetch(`/api/staff/${staffId}`, {
+                    method: 'DELETE'
+                });
+                
+                const result = await response.json();
+                
+                if (result.status === 'success') {
+                    showAlert('success', result.message);
+                    // フィルタをクリアしてから一覧を再読み込み
+                    clearFilters();
+                    await loadStaffList(); // 一覧を再読み込み
+                    console.log('スタッフ一覧を更新しました');
+                } else {
+                    showAlert('error', result.message || '削除に失敗しました');
+                }
+            } catch (error) {
+                console.error('スタッフ削除エラー:', error);
+                showAlert('error', 'サーバーエラーが発生しました');
+            }
+        }
+
+        // アラート表示
+        function showAlert(type, message, duration = 5000) {
+            const alertArea = document.getElementById('alert-area');
+            const alertDiv = document.createElement('div');
+            
+            alertDiv.className = `alert alert-${type}`;
+            alertDiv.innerHTML = `
+                <strong>${type === 'success' ? '✅' : '❌'}</strong>
+                ${message}
+            `;
+            
+            alertArea.appendChild(alertDiv);
+            
+            // 自動削除
+            setTimeout(() => {
+                if (alertDiv.parentNode) {
+                    alertDiv.parentNode.removeChild(alertDiv);
+                }
+            }, duration);
+        }
+    </script>
+</body>
+</html>

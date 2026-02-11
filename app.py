@@ -17,6 +17,7 @@ from routes import shift_generation_bp
 from routes.facility_rules import facility_rules_bp
 from routes.request_holidays import request_holidays_bp
 from routes.shift_result import shift_result_bp
+from routes.staff_management import staff_management_bp
 
 app = Flask(__name__)
 app.secret_key = config.FLASK_CONFIG.get('SECRET_KEY', 'autoshift-secret-key-change-in-production')
@@ -26,6 +27,7 @@ app.register_blueprint(shift_generation_bp)
 app.register_blueprint(facility_rules_bp)
 app.register_blueprint(request_holidays_bp)
 app.register_blueprint(shift_result_bp)
+app.register_blueprint(staff_management_bp)
 
 # ====================
 # エンドポイント

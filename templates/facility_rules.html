@@ -143,6 +143,12 @@
             color: #666;
             font-size: 14px;
         }
+        .rule-staff {
+            color: #764ba2;
+            font-size: 14px;
+            font-weight: bold;
+            margin: 3px 0;
+        }
         .rule-rank {
             display: inline-block;
             padding: 4px 12px;
@@ -275,8 +281,7 @@
     <div class="header">
         <h1>🔧 AutoShift ルール管理</h1>
         <nav>
-            <a href="/" class="">ホーム</a>
-            <a href="/facility_rules" class="active">ルール管理</a>
+            <a href="/" class="">ホーム</a>            <a href="/staff_management">スタッフ管理</a>            <a href="/facility_rules" class="active">ルール管理</a>
             <a href="/request_holidays">希望休管理</a>
             <a href="/shift_display">シフト表示</a>
         </nav>
@@ -458,6 +463,14 @@
             const div = document.createElement('div');
             div.className = 'rule-item';
             
+            // 個人ルール用のスタッフ情報追加
+            let staffInfo = '';
+            if (rule.staff_name) {
+                staffInfo = `<div class="rule-staff">対象: ${rule.staff_name}</div>`;
+            } else if (rule.staff_names && rule.staff_names.length > 0) {
+                staffInfo = `<div class="rule-staff">対象: ${rule.staff_names.join(', ')}</div>`;
+            }
+            
             div.innerHTML = `
                 <div class="rule-info">
                     <div class="rule-id">${rule.id}</div>
@@ -465,6 +478,7 @@
                         ${rule.title}
                         <span class="rule-rank rank-${rule.rank.toLowerCase()}">${rule.rank}</span>
                     </div>
+                    ${staffInfo}
                     <div class="rule-description">${rule.description}</div>
                 </div>
                 <div class="rule-actions">
@@ -492,19 +506,21 @@
 
                 const filteredRules = {
                     facility_rules: currentRules.facility_rules.filter(rule => 
-                        rule.rule_id.toLowerCase().includes(query) ||
-                        rule.rule_name.toLowerCase().includes(query) ||
+                        rule.id.toLowerCase().includes(query) ||
+                        rule.title.toLowerCase().includes(query) ||
                         rule.description.toLowerCase().includes(query)
                     ),
                     personal_rules: currentRules.personal_rules.filter(rule => 
-                        rule.rule_id.toLowerCase().includes(query) ||
-                        rule.rule_name.toLowerCase().includes(query) ||
-                        rule.description.toLowerCase().includes(query)
+                        rule.id.toLowerCase().includes(query) ||
+                        rule.title.toLowerCase().includes(query) ||
+                        rule.description.toLowerCase().includes(query) ||
+                        (rule.staff_name && rule.staff_name.toLowerCase().includes(query))
                     ),
                     relationship_rules: currentRules.relationship_rules.filter(rule => 
-                        rule.rule_id.toLowerCase().includes(query) ||
-                        rule.rule_name.toLowerCase().includes(query) ||
-                        rule.description.toLowerCase().includes(query)
+                        rule.id.toLowerCase().includes(query) ||
+                        rule.title.toLowerCase().includes(query) ||
+                        rule.description.toLowerCase().includes(query) ||
+                        (rule.staff_names && rule.staff_names.join(' ').toLowerCase().includes(query))
                     )
                 };
 
@@ -529,17 +545,19 @@
             // ルール情報を検索
             let rule = null;
             for (const category of ['facility_rules', 'personal_rules', 'relationship_rules']) {
-                rule = currentRules[category].find(r => r.rule_id === ruleId);
+                rule = currentRules[category].find(r => r.id === ruleId);
                 if (rule) break;
             }
 
             if (rule) {
-                document.getElementById('rule_id').value = rule.rule_id;
+                document.getElementById('rule_id').value = rule.id;
                 document.getElementById('rule_id').disabled = true;
-                document.getElementById('rule_name').value = rule.rule_name;
+                document.getElementById('rule_name').value = rule.title;
                 document.getElementById('description').value = rule.description;
                 document.getElementById('rank').value = rule.rank;
                 document.getElementById('rule-modal').style.display = 'block';
+            } else {
+                showAlert('error', 'ルール情報が見つかりません');
             }
         }
 
@@ -645,13 +663,13 @@
             document.getElementById('rules-container').style.display = show ? 'none' : 'block';
         }
 
-        // モーダル外クリックで閉じる
-        window.onclick = function(event) {
-            const modal = document.getElementById('rule-modal');
-            if (event.target === modal) {
-                closeModal();
-            }
-        }
+        // モーダル外クリックで閉じる機能を無効化
+        // window.onclick = function(event) {
+        //     const modal = document.getElementById('rule-modal');
+        //     if (event.target === modal) {
+        //         closeModal();
+        //     }
+        // }
     </script>
 </body>
 </html>

@@ -445,6 +445,36 @@
             0% { transform: rotate(0deg); }
             100% { transform: rotate(360deg); }
         }
+        
+        /* エクスポート専用ローディング */
+        .loading-spinner {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 20px;
+            padding: 30px;
+            background: #f8f9fa;
+            border: 2px solid #667eea;
+            border-radius: 10px;
+            margin: 20px 0;
+        }
+        .loading-text {
+            color: #667eea;
+        }
+        #export-status {
+            font-weight: bold;
+            font-size: 16px;
+            margin-bottom: 8px;
+        }
+        #export-progress {
+            font-size: 14px;
+            color: #6c757d;
+            font-style: italic;
+        }
+        .export-options button:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+        }
     </style>
 </head>
 <body>
@@ -452,6 +482,7 @@
         <h1>📋 AutoShift シフト表示</h1>
         <nav>
             <a href="/">ホーム</a>
+            <a href="/staff_management">スタッフ管理</a>
             <a href="/facility_rules">ルール管理</a>
             <a href="/request_holidays">希望休管理</a>
             <a href="/shift_display" class="active">シフト表示</a>
@@ -537,14 +568,25 @@
                     <h3>データエクスポート</h3>
                     <p>生成されたシフトデータを様々な形式でエクスポートできます。</p>
                     
-                    <div class="export-options">
-                        <button class="btn btn-success" onclick="exportData('csv')">
+                    <!-- エクスポートローディング表示 -->
+                    <div id="export-loading" style="display: none;">
+                        <div class="loading-spinner">
+                            <div class="spinner"></div>
+                            <div class="loading-text">
+                                <div id="export-status">エクスポート処理中...</div>
+                                <div id="export-progress">統計データを生成しています...</div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div id="export-controls" class="export-options">
+                        <button id="csv-export-btn" class="btn btn-success" onclick="exportData('csv')">
                             📄 CSV形式
                         </button>
-                        <button class="btn btn-success" onclick="exportData('json')">
+                        <button id="json-export-btn" class="btn btn-success" onclick="exportData('json')">
                             📋 JSON形式
                         </button>
-                        <button class="btn btn-success" onclick="exportData('excel')">
+                        <button id="excel-export-btn" class="btn btn-success" onclick="exportData('excel')">
                             📊 Excel形式
                         </button>
                     </div>
@@ -568,17 +610,35 @@
             loadInitialShiftData();
         });
 
-        // 初期シフトデータ読み込み
+        // 初期シフトデータ読み込み（localStorage対応）
         async function loadInitialShiftData() {
             try {
                 showLoading(true);
+                
+                // まずlocalStorageから生成済みシフトデータを確認
+                const localShiftKey = `shift_data_${currentMonth}`;
+                const localShiftData = localStorage.getItem(localShiftKey);
+                
+                if (localShiftData) {
+                    try {
+                        shiftData = JSON.parse(localShiftData);
+                        displayShiftData();
+                        showAlert('info', 'タブ切り替え前に生成したシフトデータを復元しました');
+                        return;
+                    } catch (e) {
+                        console.warn('localStorage復元に失敗しました:', e);
+                        localStorage.removeItem(localShiftKey);
+                    }
+                }
+                
+                // localStorageにデータがない場合のみサーバーから取得
                 const response = await fetch(`/api/shift/display/table/${currentMonth}`);
                 const result = await response.json();
                 
                 if (result.status === 'success' && result.data) {
                     shiftData = result.data;
                     displayShiftData();
-                    showAlert('info', '既存のシフトデータを読み込みました');
+                    showAlert('info', '既存の保存済みシフトデータを読み込みました');
                 } else if (result.status === 'no_data') {
                     // データがない場合は何も表示しない
                     shiftData = null;
@@ -604,13 +664,18 @@
             monthSelect.addEventListener('change', function() {
                 currentMonth = this.value;
                 clearShiftData();
+                loadInitialShiftData(); // 新しい月のデータを読み込み
             });
         }
 
-        // シフト生成
+        // シフト生成（localStorage保存対応）
         async function generateShift() {
             showLoading(true);
             clearShiftData();
+            
+            // 新規生成時はlocalStorageをクリア
+            const localShiftKey = `shift_data_${currentMonth}`;
+            localStorage.removeItem(localShiftKey);
             
             try {
                 const response = await fetch(`/api/shift/display/generate/${currentMonth}`, {
@@ -621,6 +686,16 @@
                 if (result.status === 'success') {
                     shiftData = result.data;
                     displayShiftData();
+                    
+                    // 生成成功時にlocalStorageに保存
+                    try {
+                        localStorage.setItem(localShiftKey, JSON.stringify(shiftData));
+                        console.log('シフトデータをlocalStorageに保存しました');
+                    } catch (e) {
+                        console.warn('localStorage保存に失敗しました:', e);
+                        // localStorage保存失敗でも、表示は継続
+                    }
+                    
                     showAlert('success', result.message);
                 } else {
                     showAlert('error', result.message || 'シフト生成に失敗しました');
@@ -1080,6 +1155,17 @@
             });
             
             console.log('✅ 日毎集計表示更新完了');
+            
+            // セル変更時にlocalStorageに更新データを保存
+            if (shiftData) {
+                try {
+                    const localShiftKey = `shift_data_${currentMonth}`;
+                    localStorage.setItem(localShiftKey, JSON.stringify(shiftData));
+                    console.log('💾 変更をlocalStorageに保存しました');
+                } catch (e) {
+                    console.warn('localStorage保存エラー:', e);
+                }
+            }
         }
 
         // 統計データ再計算
@@ -1586,20 +1672,116 @@
             }
         }
 
-        // データエクスポート
-        function exportData(format) {
+        // データエクスポート（ローディング表示付き）
+        async function exportData(format) {
             if (!shiftData) {
                 showAlert('error', '先にシフトを生成してください');
                 return;
             }
 
-            const exportUrl = `/api/shift/display/export/${currentMonth}/${format}`;
-            const link = document.createElement('a');
-            link.href = exportUrl;
-            link.download = `shift_${currentMonth}.${format}`;
-            link.click();
+            // ローディング開始
+            showExportLoading(true, format);
+            disableExportButtons(true);
             
-            showAlert('success', `${format.toUpperCase()}形式でエクスポートを開始しました`);
+            try {
+                // プログレス更新
+                updateExportProgress('データを準備しています...');
+                
+                const exportUrl = `/api/shift/display/export/${currentMonth}/${format}`;
+                
+                // フェッチでファイル取得
+                updateExportProgress('サーバーでファイルを生成中...');
+                const response = await fetch(exportUrl);
+                
+                if (!response.ok) {
+                    throw new Error(`エクスポートに失敗しました: ${response.status}`);
+                }
+                
+                // 実際のダウンロード処理
+                updateExportProgress('ファイルをダウンロード中...');
+                const blob = await response.blob();
+                
+                // ダウンロード実行
+                const url = window.URL.createObjectURL(blob);
+                const link = document.createElement('a');
+                link.href = url;
+                link.download = `shift_${currentMonth}.${format}`;
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
+                window.URL.revokeObjectURL(url);
+                
+                // 完了処理
+                updateExportProgress('エクスポート完了');
+                
+                // 少し待ってからローディングを隠す
+                setTimeout(() => {
+                    showExportLoading(false);
+                    disableExportButtons(false);
+                    showAlert('success', `${format.toUpperCase()}形式でエクスポートが完了しました`);
+                    addExportHistory(format);
+                }, 1000);
+                
+            } catch (error) {
+                // エラー処理
+                console.error('エクスポートエラー:', error);
+                showExportLoading(false);
+                disableExportButtons(false);
+                showAlert('error', `エクスポートに失敗しました: ${error.message}`);
+            }
+        }
+
+        // エクスポートローディング表示制御
+        function showExportLoading(show, format = '') {
+            const loading = document.getElementById('export-loading');
+            const controls = document.getElementById('export-controls');
+            const status = document.getElementById('export-status');
+            
+            if (show) {
+                loading.style.display = 'block';
+                controls.style.display = 'none';
+                status.textContent = `${format.toUpperCase()}形式でエクスポート処理中...`;
+            } else {
+                loading.style.display = 'none';
+                controls.style.display = 'flex';
+            }
+        }
+
+        // エクスポートプログレス更新
+        function updateExportProgress(message) {
+            const progress = document.getElementById('export-progress');
+            if (progress) {
+                progress.textContent = message;
+            }
+        }
+
+        // エクスポートボタン無効化制御
+        function disableExportButtons(disable) {
+            const buttons = ['csv-export-btn', 'json-export-btn', 'excel-export-btn'];
+            buttons.forEach(id => {
+                const btn = document.getElementById(id);
+                if (btn) {
+                    btn.disabled = disable;
+                }
+            });
+        }
+
+        // エクスポート履歴追加
+        function addExportHistory(format) {
+            const history = document.getElementById('export-history');
+            const now = new Date().toLocaleString('ja-JP');
+            const historyItem = document.createElement('div');
+            historyItem.className = 'alert alert-success';
+            historyItem.innerHTML = `
+                <strong>${format.toUpperCase()}エクスポート完了</strong><br>
+                ${now} - shift_${currentMonth}.${format}
+            `;
+            history.insertBefore(historyItem, history.firstChild);
+            
+            // 履歴は最新5件のみ保持
+            while (history.children.length > 5) {
+                history.removeChild(history.lastChild);
+            }
         }
 
         // シフト更新
@@ -1609,11 +1791,16 @@
             }
         }
 
-        // データクリア
+        // データクリア（localStorage対応）
         function clearShiftData() {
             shiftData = null;
             document.getElementById('shift-content').style.display = 'none';
             document.getElementById('status-cards').innerHTML = '';
+            
+            // localStorageもクリア（現在の月のデータのみ）
+            const localShiftKey = `shift_data_${currentMonth}`;
+            localStorage.removeItem(localShiftKey);
+            console.log('🗑️ localStorageから生成済みシフトデータを削除しました');
             
             // プレースホルダーメッセージを表示
             const noDataMessage = document.getElementById('no-data-message');

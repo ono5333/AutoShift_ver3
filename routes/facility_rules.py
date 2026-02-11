@@ -78,31 +78,51 @@ def create_facility_rule():
         # 現在のルールを読み込み
         rules = load_project_rules()
         
-        # ルールID重複チェック
-        existing_ids = [rule['rule_id'] for rule in rules['facility_rules']]
-        if data['rule_id'] in existing_ids:
+        # ルールIDのプレフィックスに基づいてカテゴリを決定
+        rule_id = data['rule_id']
+        if rule_id.startswith('FR'):
+            category = 'facility_rules'
+            category_name = '施設ルール'
+        elif rule_id.startswith('PR'):
+            category = 'personal_rules'
+            category_name = '個人ルール'
+        elif rule_id.startswith('RR'):
+            category = 'relationship_rules'
+            category_name = '関係性ルール'
+        else:
+            return jsonify({
+                'status': 'error',
+                'message': f'無効なルールIDです。FR（施設）、PR（個人）、RR（関係性）のいずれかで始まる必要があります: {rule_id}'
+            }), 400
+        
+        # ルールID重複チェック（全カテゴリをチェック）
+        all_existing_ids = []
+        for cat in ['facility_rules', 'personal_rules', 'relationship_rules']:
+            all_existing_ids.extend([rule['id'] for rule in rules[cat]])
+        
+        if data['rule_id'] in all_existing_ids:
             return jsonify({
                 'status': 'error',
                 'message': f'ルールID "{data["rule_id"]}" は既に存在します'
             }), 400
         
-        # 新しいルールを追加
+        # 新しいルールを追加 (既存の構造に合わせ、適切なカテゴリに配置)
         new_rule = {
-            'rule_id': data['rule_id'],
-            'rule_name': data['rule_name'],
+            'id': data['rule_id'],
+            'title': data['rule_name'],
             'description': data['description'],
             'rank': data['rank'],
             'parameters': data.get('parameters', {})
         }
         
-        rules['facility_rules'].append(new_rule)
+        rules[category].append(new_rule)
         
         # 保存
         save_project_rules(rules)
         
         return jsonify({
             'status': 'success',
-            'message': f'ルール "{data["rule_name"]}" を作成しました',
+            'message': f'{category_name} "{data["rule_name"]}" を作成しました',
             'data': new_rule
         }), 201
         
@@ -133,22 +153,38 @@ def update_facility_rule(rule_id):
         # 現在のルールを読み込み
         rules = load_project_rules()
         
+        # ルールIDのプレフィックスに基づいてカテゴリを決定
+        if rule_id.startswith('FR'):
+            category = 'facility_rules'
+            category_name = '施設ルール'
+        elif rule_id.startswith('PR'):
+            category = 'personal_rules'
+            category_name = '個人ルール'
+        elif rule_id.startswith('RR'):
+            category = 'relationship_rules'
+            category_name = '関係性ルール'
+        else:
+            return jsonify({
+                'status': 'error',
+                'message': f'無効なルールIDです: {rule_id}'
+            }), 400
+        
         # ルール検索
         target_rule = None
-        for rule in rules['facility_rules']:
-            if rule['rule_id'] == rule_id:
+        for rule in rules[category]:
+            if rule['id'] == rule_id:  # 正しいフィールド名を使用
                 target_rule = rule
                 break
         
         if not target_rule:
             return jsonify({
                 'status': 'error',
-                'message': f'ルールID "{rule_id}" が見つかりません'
+                'message': f'{category_name}でルールID "{rule_id}" が見つかりません'
             }), 404
         
-        # ルール更新
+        # ルール更新（既存の構造に合わせて）
         if 'rule_name' in data:
-            target_rule['rule_name'] = data['rule_name']
+            target_rule['title'] = data['rule_name']  # title フィールドに保存
         if 'description' in data:
             target_rule['description'] = data['description']
         if 'rank' in data:
@@ -161,7 +197,7 @@ def update_facility_rule(rule_id):
         
         return jsonify({
             'status': 'success',
-            'message': f'ルール "{rule_id}" を更新しました',
+            'message': f'{category_name} "{rule_id}" を更新しました',
             'data': target_rule
         }), 200
         
@@ -174,24 +210,40 @@ def update_facility_rule(rule_id):
 @facility_rules_bp.route('/api/rules/facility/<rule_id>', methods=['DELETE'])
 def delete_facility_rule(rule_id):
     """
-    施設ルール削除API
+    ルール削除API（全カテゴリ対応）
     
     Args:
-        rule_id: 削除対象のルールID
+        rule_id: 削除対象のルールID (FR001, PR001, RR001など)
     """
     try:
         # 現在のルールを読み込み
         rules = load_project_rules()
         
-        # ルール検索と削除
-        initial_count = len(rules['facility_rules'])
-        rules['facility_rules'] = [rule for rule in rules['facility_rules'] 
-                                 if rule['rule_id'] != rule_id]
-        
-        if len(rules['facility_rules']) == initial_count:
+        # ルールIDのプレフィックスに基づいてカテゴリを決定
+        if rule_id.startswith('FR'):
+            category = 'facility_rules'
+            category_name = '施設ルール'
+        elif rule_id.startswith('PR'):
+            category = 'personal_rules'
+            category_name = '個人ルール'
+        elif rule_id.startswith('RR'):
+            category = 'relationship_rules'
+            category_name = '関係性ルール'
+        else:
             return jsonify({
                 'status': 'error',
-                'message': f'ルールID "{rule_id}" が見つかりません'
+                'message': f'無効なルールIDです: {rule_id}'
+            }), 400
+        
+        # ルール検索と削除
+        initial_count = len(rules[category])
+        rules[category] = [rule for rule in rules[category] 
+                          if rule['id'] != rule_id]  # 正しいフィールド名を使用
+        
+        if len(rules[category]) == initial_count:
+            return jsonify({
+                'status': 'error',
+                'message': f'{category_name}でルールID "{rule_id}" が見つかりません'
             }), 404
         
         # 保存
@@ -199,7 +251,7 @@ def delete_facility_rule(rule_id):
         
         return jsonify({
             'status': 'success',
-            'message': f'ルール "{rule_id}" を削除しました'
+            'message': f'{category_name} "{rule_id}" を削除しました'
         }), 200
         
     except Exception as e:
