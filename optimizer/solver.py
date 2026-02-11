@@ -74,7 +74,7 @@ class ShiftOptimizer:
     def load_data(self) -> None:
         """プロジェクトデータの読み込み"""
         try:
-            print(f"📅 {self.month_year} のシフト最適化を開始...")
+            print(f"[INFO] {self.month_year} のシフト最適化を開始...")
             
             # スタッフ・ルール・希望休み読み込み
             self.staff_list = load_project_staff()
@@ -84,7 +84,7 @@ class ShiftOptimizer:
             # 対象月の日付リスト作成
             self._generate_dates()
             
-            print(f"📊 データ読み込み完了:")
+            print(f"[INFO] データ読み込み完了:")
             print(f"   - スタッフ: {len(self.staff_list)}名")
             print(f"   - 施設ルール: {len(self.rules['facility_rules'])}個") 
             print(f"   - 個人ルール: {len(self.rules['personal_rules'])}個")
@@ -106,7 +106,7 @@ class ShiftOptimizer:
     def build_model(self) -> None:
         """最適化モデルの構築"""
         try:
-            print("🔧 最適化モデル構築中...")
+            print("[INFO] 最適化モデル構築中...")
             
             # 1. 決定変数作成
             self._create_variables()
@@ -123,7 +123,7 @@ class ShiftOptimizer:
             # 4. 目的関数構築
             self._build_objective()
             
-            print("✅ モデル構築完了")
+            print("[OK] モデル構築完了")
             
         except Exception as e:
             raise Exception(f"モデル構築エラー: {e}")
@@ -201,7 +201,7 @@ class ShiftOptimizer:
             ShiftResult: 最適化結果（ステータス・シフト・違反情報等）
         """
         try:
-            print("🚀 最適化実行中...")
+            print("[RUN] 最適化実行中...")
             
             # タイムアウト設定（60秒）
             self.solver.parameters.max_time_in_seconds = 60
@@ -216,13 +216,13 @@ class ShiftOptimizer:
             # ステータス判定
             if status == cp_model.OPTIMAL:
                 self.solve_status = "OPTIMAL"
-                print(f"✅ 最適解発見！ ({self.solve_time:.2f}秒)")
+                print(f"[OK] 最適解発見！ ({self.solve_time:.2f}秒)")
             elif status == cp_model.FEASIBLE:
                 self.solve_status = "FEASIBLE"
-                print(f"⚠️ 実行可能解発見 ({self.solve_time:.2f}秒)")
+                print(f"[WARN] 実行可能解発見 ({self.solve_time:.2f}秒)")
             elif status == cp_model.INFEASIBLE:
                 self.solve_status = "INFEASIBLE"
-                print(f"❌ 実行不可能 ({self.solve_time:.2f}秒)")
+                print(f"[ERROR] 実行不可能 ({self.solve_time:.2f}秒)")
                 # 空の結果を返す
                 return ShiftResult(
                     month=self.month_year,
@@ -272,7 +272,7 @@ class ShiftOptimizer:
             solver_status=self.solve_status
         )
         
-        print(f"📊 結果抽出完了:")
+        print(f"[INFO] 結果抽出完了:")
         print(f"   - シフト割当: {len(shifts)}件")
         print(f"   - 制約違反: {len(self.violations)}件")
         
@@ -298,5 +298,5 @@ class ShiftOptimizer:
             return result
             
         except Exception as e:
-            print(f"❌ 最適化エラー: {e}")
+            print(f"[ERROR] 最適化エラー: {e}")
             raise

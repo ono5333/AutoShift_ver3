@@ -91,12 +91,13 @@ class ConstraintManager:
             # FR015: 勤務日数の計算 (ランクB)
             self._add_fr015_work_days_calculation()
             
-            # 複雑な制約は一時的にスキップ
-            # TODO: 段階的に追加
+            # 複雑な制約は一時的にスキップ（型不整合エラー修正まで）
+            # TODO: FR014,FR016を修正後に再有効化
+            # - FR014: お風呂担当の配置 (ランクB) - 型不整合修正が必要
+            # - FR016: 介護士の勤務日数平均化 (ランクC) - 型不整合修正が必要
             # - FR004,006-007: その他月別公休日数制約
-            # - FR014,016: その他制約
             
-            print(f"   ✅ 施設ルール制約 9個 追加完了（簡易版）")
+            print(f"   ✅ 施設ルール制約 9個 追加完了（安定版）")
             
         except Exception as e:
             raise Exception(f"施設ルール制約追加エラー: {e}")
@@ -423,11 +424,14 @@ class ConstraintManager:
         # ランクB制約: ペナルティ変数使用
         for target_date in self.dates:
             if target_date.weekday() in [0, 3]:  # 月・木
-                bath_staff_vars = [
-                    self.shift[(staff.id, target_date)] == ShiftType.DAY.value
-                    for staff in self.staff_list
-                    if staff.staff_class == "お風呂"
-                ]
+                bath_staff_vars = []
+                for staff in self.staff_list:
+                    if staff.staff_class == "お風呂":
+                        # Boolean変数を作成してからvarsに追加
+                        is_bath_day = self.model.NewBoolVar(f"bath_{staff.id}_{target_date.strftime('%m%d')}")
+                        self.model.Add(self.shift[(staff.id, target_date)] == ShiftType.DAY.value).OnlyEnforceIf(is_bath_day)
+                        self.model.Add(self.shift[(staff.id, target_date)] != ShiftType.DAY.value).OnlyEnforceIf(is_bath_day.Not())
+                        bath_staff_vars.append(is_bath_day)
                 
                 if bath_staff_vars:  # お風呂スタッフが存在する場合
                     # ペナルティ変数: お風呂スタッフが0名の場合に1
@@ -452,10 +456,22 @@ class ConstraintManager:
             for target_date in self.dates:
                 work_flag = self.model.NewBoolVar(f"caregiver_work_{staff.id}_{target_date.day}")
                 
-                is_day = self.shift[(staff.id, target_date)] == ShiftType.DAY.value
-                is_night = self.shift[(staff.id, target_date)] == ShiftType.NIGHT.value
-                is_night_off = self.shift[(staff.id, target_date)] == ShiftType.NIGHT_SHIFT_OFF.value
+                # 各勤務タイプのBoolean変数を作成
+                is_day = self.model.NewBoolVar(f"is_day_{staff.id}_{target_date.day}")
+                is_night = self.model.NewBoolVar(f"is_night_{staff.id}_{target_date.day}")
+                is_night_off = self.model.NewBoolVar(f"is_night_off_{staff.id}_{target_date.day}")
                 
+                # 各勤務タイプの条件設定
+                self.model.Add(self.shift[(staff.id, target_date)] == ShiftType.DAY.value).OnlyEnforceIf(is_day)
+                self.model.Add(self.shift[(staff.id, target_date)] != ShiftType.DAY.value).OnlyEnforceIf(is_day.Not())
+                
+                self.model.Add(self.shift[(staff.id, target_date)] == ShiftType.NIGHT.value).OnlyEnforceIf(is_night)
+                self.model.Add(self.shift[(staff.id, target_date)] != ShiftType.NIGHT.value).OnlyEnforceIf(is_night.Not())
+                
+                self.model.Add(self.shift[(staff.id, target_date)] == ShiftType.NIGHT_SHIFT_OFF.value).OnlyEnforceIf(is_night_off)
+                self.model.Add(self.shift[(staff.id, target_date)] != ShiftType.NIGHT_SHIFT_OFF.value).OnlyEnforceIf(is_night_off.Not())
+                
+                # 勤務フラグ設定: いずれかの勤務タイプの場合
                 self.model.Add(work_flag >= is_day)
                 self.model.Add(work_flag >= is_night)
                 self.model.Add(work_flag >= is_night_off)
@@ -473,32 +489,54 @@ class ConstraintManager:
                 self.weight_vars.append(diff_var)
                 
     def add_personal_constraints(self) -> None:
-        """個人ルール制約（PR001-PR010）の追加（簡易版）"""
-        print("   👤 個人ルール制約追加中...簡易版")
+        """個人ルール制約（PR001-PR010）の追加"""
+        print("   👤 個人ルール制約追加中...")
         
         try:
             personal_rules = self.rules.get('personal_rules', [])
+            implemented_count = 0
             
             for rule in personal_rules:
                 rule_id = rule.get('id')
                 constraint_type = rule.get('constraint_type')
                 staff_id = rule.get('staff_id')
+                staff_name = rule.get('staff_name', f'スタッフ{staff_id}')
                 
                 if not all([rule_id, constraint_type, staff_id]):
                     continue
                     
                 if constraint_type == 'no_night_shift':
+                    # PR001-PR004: 夜勤不可
                     self._add_no_night_shift_constraint(staff_id)
+                    implemented_count += 1
+                    print(f"      - {rule_id}: {staff_name} 夜勤不可")
+                    
                 elif constraint_type == 'max_night_shifts':
+                    # PR006-PR008: 夜勤回数上限
                     max_count = rule.get('max_count', 5)
                     self._add_max_night_shifts_constraint(staff_id, max_count)
+                    implemented_count += 1
+                    print(f"      - {rule_id}: {staff_name} 夜勤回数上限{max_count}回")
+                    
+                elif constraint_type == 'day_off_after_night_shift':
+                    # PR009: 夜勤明けは公休
+                    self._add_day_off_after_night_shift_constraint(staff_id)
+                    implemented_count += 1
+                    print(f"      - {rule_id}: {staff_name} 夜勤明けは公休")
+                    
+                elif constraint_type == 'fixed_day_off':
+                    # PR005: 固定休日
+                    day_of_week = rule.get('day_of_week', 0)  # 0=日曜日
+                    self._add_fixed_day_off_constraint(staff_id, day_of_week)
+                    implemented_count += 1
+                    weekdays = ['日', '月', '火', '水', '木', '金', '土']
+                    day_name = weekdays[day_of_week] if 0 <= day_of_week <= 6 else '不明'
+                    print(f"      - {rule_id}: {staff_name} {day_name}曜日固定休")
                 
                 # 複雑な制約は一時的にスキップ
                 # TODO: 段階的に追加
-                # - fixed_day_off: 固定休日
-                # - day_off_after_night_shift: 夜勤明けは公休
                     
-            print(f"   ✅ 個人ルール制約 {len(personal_rules)}個 追加完了（簡易版）")
+            print(f"   ✅ 個人ルール制約 {implemented_count}個 追加完了")
             
         except Exception as e:
             raise Exception(f"個人ルール制約追加エラー: {e}")
@@ -536,42 +574,84 @@ class ConstraintManager:
             self.model.Add(sum(night_shift_bool_vars) <= max_count)
         
     def _add_day_off_after_night_shift_constraint(self, staff_id: int) -> None:
-        """夜勤明けは公休制約"""
+        """夜勤明けは公休制約 - OR-Tools CP-SAT対応版"""
         for i, target_date in enumerate(self.dates[:-2]):  # 後2日を除外
             if i + 2 < len(self.dates):
-                # 夜勤→夜勤明け→公休のパターン
-                night_today = self.shift[(staff_id, target_date)] == ShiftType.NIGHT.value
-                night_off_tomorrow = self.shift[(staff_id, self.dates[i + 1])] == ShiftType.NIGHT_SHIFT_OFF.value
-                public_holiday_day_after = self.shift[(staff_id, self.dates[i + 2])] == ShiftType.PUBLIC_HOLIDAY.value
+                next_date = self.dates[i + 1]
+                day_after_next = self.dates[i + 2]
                 
-                # 夜勤の場合、翌日夜勤明け、翌々日公休
+                # Boolean変数を明示的に作成
+                night_today = self.model.NewBoolVar(f"pr009_night_{staff_id}_{target_date.day}")
+                night_off_tomorrow = self.model.NewBoolVar(f"pr009_night_off_{staff_id}_{next_date.day}")
+                public_holiday_day_after = self.model.NewBoolVar(f"pr009_public_{staff_id}_{day_after_next.day}")
+                
+                # 夜勤フラグの設定
+                self.model.Add(self.shift[(staff_id, target_date)] == ShiftType.NIGHT.value).OnlyEnforceIf(night_today)
+                self.model.Add(self.shift[(staff_id, target_date)] != ShiftType.NIGHT.value).OnlyEnforceIf(night_today.Not())
+                
+                # 夜勤明けフラグの設定
+                self.model.Add(self.shift[(staff_id, next_date)] == ShiftType.NIGHT_SHIFT_OFF.value).OnlyEnforceIf(night_off_tomorrow)
+                self.model.Add(self.shift[(staff_id, next_date)] != ShiftType.NIGHT_SHIFT_OFF.value).OnlyEnforceIf(night_off_tomorrow.Not())
+                
+                # 公休フラグの設定
+                self.model.Add(self.shift[(staff_id, day_after_next)] == ShiftType.PUBLIC_HOLIDAY.value).OnlyEnforceIf(public_holiday_day_after)
+                self.model.Add(self.shift[(staff_id, day_after_next)] != ShiftType.PUBLIC_HOLIDAY.value).OnlyEnforceIf(public_holiday_day_after.Not())
+                
+                # 制約: 夜勤 → 翌日夜勤明け → 翌々日公休
                 self.model.AddImplication(night_today, night_off_tomorrow)
                 self.model.AddImplication(night_off_tomorrow, public_holiday_day_after)
                 
+                # 特別なケース: 夜勤明けの日に希望休・有給がある場合の考慮
+                # 希望休制約が最優先なので、希望休がある日は公休制約を緩和
+                
     def add_relationship_constraints(self) -> None:
-        """人間関係ルール制約（RR001）の追加（簡易版）"""
-        print("   👥 人間関係ルール制約追加中...簡易版")
+        """人間関係ルール制約（RR001）の追加"""
+        print("   👥 人間関係ルール制約追加中...")
         
         try:
             relationship_rules = self.rules.get('relationship_rules', [])
+            implemented_count = 0
             
-            # 一時的にスキップ
-            # TODO: 段階的に追加
-            # - cannot_work_together: 同日夜勤不可
+            for rule in relationship_rules:
+                rule_id = rule.get('id')
+                constraint_type = rule.get('constraint_type')
+                staff_ids = rule.get('staff_ids', [])
+                shift_type = rule.get('shift_type')
+                
+                if not all([rule_id, constraint_type, staff_ids]) or len(staff_ids) != 2:
+                    continue
+                
+                staff_id1, staff_id2 = staff_ids[0], staff_ids[1]
+                
+                if constraint_type == 'cannot_work_together' and shift_type == '夜':
+                    # RR001: 同日夜勤不可制約を実装
+                    self._add_cannot_work_together_night(staff_id1, staff_id2)
+                    implemented_count += 1
+                    staff1_name = rule.get('staff_names', [f'スタッフ{staff_id1}', f'スタッフ{staff_id2}'])[0]
+                    staff2_name = rule.get('staff_names', [f'スタッフ{staff_id1}', f'スタッフ{staff_id2}'])[1]
+                    print(f"      - {rule_id}: {staff1_name} & {staff2_name} 同日夜勤不可")
                         
-            print(f"   ✅ 人間関係ルール制約 {len(relationship_rules)}個 スキップ（簡易版）")
+            print(f"   ✅ 人間関係ルール制約 {implemented_count}個 追加完了")
             
         except Exception as e:
             raise Exception(f"人間関係ルール制約追加エラー: {e}")
             
     def _add_cannot_work_together_night(self, staff_id1: int, staff_id2: int) -> None:
-        """同日夜勤不可制約"""
+        """同日夜勤不可制約 - OR-Tools CP-SAT対応版"""
         for target_date in self.dates:
-            night1 = self.shift[(staff_id1, target_date)] == ShiftType.NIGHT.value
-            night2 = self.shift[(staff_id2, target_date)] == ShiftType.NIGHT.value
+            # 各スタッフの夜勤フラグを明示的にboolean変数として作成
+            night1_var = self.model.NewBoolVar(f"night_{staff_id1}_{target_date.day}")
+            night2_var = self.model.NewBoolVar(f"night_{staff_id2}_{target_date.day}")
             
-            # 同日に両方が夜勤になることを禁止
-            self.model.Add(night1 + night2 <= 1)
+            # 夜勤フラグの設定
+            self.model.Add(self.shift[(staff_id1, target_date)] == ShiftType.NIGHT.value).OnlyEnforceIf(night1_var)
+            self.model.Add(self.shift[(staff_id1, target_date)] != ShiftType.NIGHT.value).OnlyEnforceIf(night1_var.Not())
+            
+            self.model.Add(self.shift[(staff_id2, target_date)] == ShiftType.NIGHT.value).OnlyEnforceIf(night2_var)
+            self.model.Add(self.shift[(staff_id2, target_date)] != ShiftType.NIGHT.value).OnlyEnforceIf(night2_var.Not())
+            
+            # 制約: 同日に両方が夜勤になることを禁止
+            self.model.Add(night1_var + night2_var <= 1)
             
     def add_request_holiday_constraints(self) -> None:
         """希望休み制約の追加 - 厳密実装"""

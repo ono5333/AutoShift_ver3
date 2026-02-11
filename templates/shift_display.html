@@ -182,6 +182,11 @@
             top: 0;
             z-index: 10;
         }
+        .shift-table .day-of-week {
+            font-size: 11px;
+            color: #6c757d;
+            font-weight: normal;
+        }
         .shift-table .staff-name {
             background: #f8f9fa;
             font-weight: 500;
@@ -197,6 +202,102 @@
         }
         .shift-cell.day {
             background: #e7f3ff;
+        }
+        .shift-cell.night {
+            background: #ffe7e7;
+        }
+        .shift-cell.night-off {
+            background: #fff2e7;
+        }
+        .shift-cell.holiday {
+            background: #e7ffe7;
+        }
+        .shift-cell.request {
+            background: #f0e7ff;
+        }
+        .shift-cell.paid {
+            background: #ffe7f0;
+        }
+        /* 集計セルのスタイル - 通常セルと同じサイズに統一 */
+        .staff-summary {
+            position: relative;
+            min-width: 35px;
+            padding: 8px 4px;
+            text-align: center;
+            border: 1px solid #dee2e6;
+            font-size: 14px;
+            background: #f8f9fa;
+            font-weight: bold;
+        }
+        .summary-cell {
+            position: relative;
+            min-width: 35px;
+            padding: 8px 4px;
+            text-align: center;
+            border: 1px solid #dee2e6;
+            font-size: 14px;
+            background: #495057;
+            color: white;
+            font-weight: bold;
+        }
+        .daily-summary {
+            position: relative;
+            min-width: 35px;
+            padding: 8px 4px;
+            text-align: center;
+            border: 1px solid #dee2e6;
+            font-size: 14px;
+            background: #e9ecef;
+            font-weight: bold;
+        }
+        .shift-cell.night {
+            background: #ffe7e7;
+        }
+        .shift-cell.night-off {
+            background: #fff2e7;
+        }
+        .shift-cell.holiday {
+            background: #e7ffe7;
+        }
+        .shift-cell.request {
+            background: #f0e7ff;
+        }
+        .shift-cell.paid {
+            background: #ffe7f0;
+        }
+        /* 集計行・列のスタイル */
+        .summary-header {
+            background: #495057 !important;
+            color: white;
+            font-weight: bold;
+        }
+        /* 曜日スタイル */
+        .day-of-week {
+            font-size: 12px;
+            font-weight: normal;
+            color: #666;
+        }
+        .day-of-week.sunday { 
+            color: #d32f2f !important; 
+            font-weight: bold;
+        } /* 日曜日 */
+        .day-of-week.saturday { 
+            color: #1976d2 !important; 
+            font-weight: bold;
+        } /* 土曜日 */
+        .summary-cell {
+            background: #f8f9fa;
+            font-weight: bold;
+            border: 2px solid #495057;
+        }
+        .daily-summary {
+            background: #e9ecef;
+            font-weight: bold;
+        }
+        .staff-summary {
+            background: #f8f9fa;
+            font-weight: bold;
+            border-left: 2px solid #495057;
         }
         .shift-cell.night {
             background: #2d3748;
@@ -555,17 +656,48 @@
                 return;
             }
 
-            // ヘッダー行生成
-            let headerHtml = '<thead><tr><th class="staff-name">スタッフ</th>';
+            // 日毎・スタッフ毎集計計算
+            const dailySummary = calculateDailySummary();
+            const staffSummaries = calculateStaffSummaries();
+
+            // 曜日計算関数
+            function getDayOfWeek(year, month, day) {
+                const date = new Date(year, month - 1, day);
+                const dayNames = ['日', '月', '火', '水', '木', '金', '土'];
+                return dayNames[date.getDay()];
+            }
+
+            // ヘッダー行生成（日付 + 曜日 + 集計列）
+            let headerHtml = '<thead>';
+            // 1行目: 日付
+            headerHtml += '<tr><th class="staff-name" rowspan="2">スタッフ</th>';
             for (let day = 1; day <= 31; day++) {
                 headerHtml += `<th>${day}</th>`;
             }
+            headerHtml += '<th class="summary-header" rowspan="2">日</th>';
+            headerHtml += '<th class="summary-header" rowspan="2">夜</th>';
+            headerHtml += '<th class="summary-header" rowspan="2">明</th>';
+            headerHtml += '<th class="summary-header" rowspan="2">休</th>';
+            headerHtml += '<th class="summary-header" rowspan="2">希</th>';
+            headerHtml += '<th class="summary-header" rowspan="2">有</th>';
+            headerHtml += '</tr>';
+            // 2行目: 曜日
+            headerHtml += '<tr>';
+            const monthSelectValue = document.getElementById('month-select').value;
+            const [currentYear, currentMonth] = monthSelectValue.split('-').map(Number);
+            for (let day = 1; day <= 31; day++) {
+                const dayOfWeek = getDayOfWeek(currentYear, currentMonth, day);
+                let dayClass = '';
+                if (dayOfWeek === '日') dayClass = ' sunday';
+                else if (dayOfWeek === '土') dayClass = ' saturday';
+                headerHtml += `<th class="day-of-week${dayClass}">${dayOfWeek}</th>`;
+            }
             headerHtml += '</tr></thead>';
 
-            // データ行生成
+            // データ行生成（各スタッフ + 集計）
             let bodyHtml = '<tbody>';
             if (shiftData.shift_table.rows) {
-                shiftData.shift_table.rows.forEach(row => {
+                shiftData.shift_table.rows.forEach((row, index) => {
                     bodyHtml += `<tr>`;
                     bodyHtml += `<td class="staff-name">${row.staff_name}</td>`;
                     for (let day = 1; day <= 31; day++) {
@@ -573,11 +705,44 @@
                         const cellClass = getCellClass(cellData);
                         bodyHtml += `<td class="shift-cell ${cellClass}">${cellData || ''}</td>`;
                     }
+                    
+                    // スタッフ別集計列
+                    const summary = staffSummaries[index] || {日: 0, 夜: 0, 明: 0, 休: 0, 希: 0, 有: 0};
+                    bodyHtml += `<td class="staff-summary">${summary.日}</td>`;
+                    bodyHtml += `<td class="staff-summary">${summary.夜}</td>`;
+                    bodyHtml += `<td class="staff-summary">${summary.明}</td>`;
+                    bodyHtml += `<td class="staff-summary">${summary.休}</td>`;
+                    bodyHtml += `<td class="staff-summary">${summary.希}</td>`;
+                    bodyHtml += `<td class="staff-summary">${summary.有}</td>`;
                     bodyHtml += `</tr>`;
                 });
             }
+            
+            // 日毎集計行
+            bodyHtml += '<tr class="daily-summary-row">';
+            bodyHtml += '<td class="staff-name">合計</td>';
+            for (let day = 1; day <= 31; day++) {
+                const dayData = dailySummary[day] || {};
+                const totalCount = (dayData.日 || 0) + (dayData.夜 || 0) + (dayData.明 || 0) + (dayData.休 || 0) + (dayData.希 || 0) + (dayData.有 || 0);
+                bodyHtml += `<td class="daily-summary" title="日:${dayData.日||0} 夜:${dayData.夜||0} 明:${dayData.明||0} 休:${dayData.休||0} 希:${dayData.希||0} 有:${dayData.有||0}">${totalCount}</td>`;
+            }
+            bodyHtml += '<td class="summary-cell">-</td><td class="summary-cell">-</td><td class="summary-cell">-</td><td class="summary-cell">-</td><td class="summary-cell">-</td><td class="summary-cell">-</td>';
+            bodyHtml += '</tr>';
+            
+            // 詳細日毎集計行（各シフト区分別）
+            const shiftTypes = ['日', '夜', '明', '休', '希', '有'];
+            shiftTypes.forEach(shiftType => {
+                bodyHtml += `<tr class="daily-summary-row">`;
+                bodyHtml += `<td class="staff-name">${shiftType}</td>`;
+                for (let day = 1; day <= 31; day++) {
+                    const count = dailySummary[day] ? (dailySummary[day][shiftType] || 0) : 0;
+                    bodyHtml += `<td class="daily-summary">${count}</td>`;
+                }
+                bodyHtml += '<td class="summary-cell">-</td><td class="summary-cell">-</td><td class="summary-cell">-</td><td class="summary-cell">-</td><td class="summary-cell">-</td><td class="summary-cell">-</td>';
+                bodyHtml += '</tr>';
+            });
+            
             bodyHtml += '</tbody>';
-
             table.innerHTML = headerHtml + bodyHtml;
         }
 
@@ -589,11 +754,66 @@
                 case '日': return 'day';
                 case '夜': return 'night';
                 case '明': return 'night-off';
-                case '公': return 'holiday';
+                case '公': case '休': return 'holiday';
                 case '希': return 'request';
                 case '有': return 'paid';
                 default: return '';
             }
+        }
+        
+        // 日毎集計計算
+        function calculateDailySummary() {
+            const dailySummary = {};
+            
+            if (!shiftData.shift_table || !shiftData.shift_table.rows) {
+                return dailySummary;
+            }
+            
+            // 各日について集計
+            for (let day = 1; day <= 31; day++) {
+                dailySummary[day] = {日: 0, 夜: 0, 明: 0, 休: 0, 希: 0, 有: 0};
+                
+                shiftData.shift_table.rows.forEach(row => {
+                    const cellData = row.days && row.days[day] ? row.days[day] : '';
+                    if (cellData) {
+                        // '公'を'休'として統一
+                        const normalizedData = cellData === '公' ? '休' : cellData;
+                        if (dailySummary[day][normalizedData] !== undefined) {
+                            dailySummary[day][normalizedData]++;
+                        }
+                    }
+                });
+            }
+            
+            return dailySummary;
+        }
+        
+        // スタッフ別集計計算
+        function calculateStaffSummaries() {
+            const staffSummaries = [];
+            
+            if (!shiftData.shift_table || !shiftData.shift_table.rows) {
+                return staffSummaries;
+            }
+            
+            shiftData.shift_table.rows.forEach(row => {
+                const summary = {日: 0, 夜: 0, 明: 0, 休: 0, 希: 0, 有: 0};
+                
+                for (let day = 1; day <= 31; day++) {
+                    const cellData = row.days && row.days[day] ? row.days[day] : '';
+                    if (cellData) {
+                        // '公'を'休'として統一
+                        const normalizedData = cellData === '公' ? '休' : cellData;
+                        if (summary[normalizedData] !== undefined) {
+                            summary[normalizedData]++;
+                        }
+                    }
+                }
+                
+                staffSummaries.push(summary);
+            });
+            
+            return staffSummaries;
         }
 
         // 統計表示

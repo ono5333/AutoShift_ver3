@@ -134,6 +134,21 @@
             border-bottom: 1px solid #dee2e6;
             border-left: 1px solid #dee2e6;
         }
+        .day-header .day-of-week {
+            font-size: 11px;
+            color: #6c757d;
+            font-weight: normal;
+            margin-top: 2px;
+        }
+        /* 曜日別色付け - 動的クラス使用 */
+        .day-of-week.sunday { 
+            color: #d32f2f !important; 
+            font-weight: bold;
+        } /* 日曜日 */
+        .day-of-week.saturday { 
+            color: #1976d2 !important; 
+            font-weight: bold;
+        } /* 土曜日 */
         .staff-row {
             display: contents;
         }
@@ -535,11 +550,26 @@
             staffHeader.textContent = 'スタッフ';
             calendarGrid.appendChild(staffHeader);
             
-            // 日付ヘッダー
+            // 曜日計算関数
+            function getDayOfWeek(year, month, day) {
+                const date = new Date(year, month - 1, day);
+                const dayNames = ['日', '月', '火', '水', '木', '金', '土'];
+                return dayNames[date.getDay()];
+            }
+
+            // 日付ヘッダー（日付と曜日を表示）
             for (let day = 1; day <= calendarData.days_in_month; day++) {
                 const dayHeader = document.createElement('div');
                 dayHeader.className = 'day-header';
-                dayHeader.textContent = day;
+                const monthSelectValue = document.getElementById('month-select').value;
+                const [currentYear, currentMonth] = monthSelectValue.split('-').map(Number);
+                const dayOfWeek = getDayOfWeek(currentYear, currentMonth, day);
+                
+                let dayClass = '';
+                if (dayOfWeek === '日') dayClass = ' sunday';
+                else if (dayOfWeek === '土') dayClass = ' saturday';
+                
+                dayHeader.innerHTML = `<div>${day}</div><div class="day-of-week${dayClass}">${dayOfWeek}</div>`;
                 calendarGrid.appendChild(dayHeader);
             }
             
