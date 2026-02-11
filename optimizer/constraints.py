@@ -54,7 +54,7 @@ class ConstraintManager:
         # 重み変数（ランクC制約用）
         self.weight_vars = []
         
-        # 違反追跡
+        # 違反追跡（penalty_var, staff_id, date, constraint_name, description）
         self.constraint_violations = []
         
         print(f"🔗 制約マネージャー初期化完了")
@@ -91,13 +91,19 @@ class ConstraintManager:
             # FR015: 勤務日数の計算 (ランクB)
             self._add_fr015_work_days_calculation()
             
+            # FR017: 公休の前後配置最適化 (ランクC)
+            self._add_fr017_holiday_adjacent_optimization()
+            
+            # FR018: 連休制限&2連休促進 (ランクB)
+            self._add_fr018_max_consecutive_holidays()
+            
             # 複雑な制約は一時的にスキップ（型不整合エラー修正まで）
             # TODO: FR014,FR016を修正後に再有効化
             # - FR014: お風呂担当の配置 (ランクB) - 型不整合修正が必要
             # - FR016: 介護士の勤務日数平均化 (ランクC) - 型不整合修正が必要
             # - FR004,006-007: その他月別公休日数制約
             
-            print(f"   ✅ 施設ルール制約 9個 追加完了（安定版）")
+            print(f"   ✅ 施設ルール制約 11個 追加完了（安定版）")
             
         except Exception as e:
             raise Exception(f"施設ルール制約追加エラー: {e}")
@@ -417,7 +423,11 @@ class ConstraintManager:
             self.model.Add(sum(work_flags) - expected_work_days <= penalty_over)
             self.model.Add(expected_work_days - sum(work_flags) <= penalty_under)
             
-            self.penalty_vars.extend([penalty_over, penalty_under])
+            # 詳細情報付きでペナルティ制約を記録
+            self._add_penalty_constraint(penalty_over, staff.id, None, "FR015", 
+                                       f"{staff.name}の勤務日数制約違反（超過）")
+            self._add_penalty_constraint(penalty_under, staff.id, None, "FR015",
+                                       f"{staff.name}の勤務日数制約違反（不足）")
                 
     def _add_fr014_bath_staff_assignment(self) -> None:
         """FR014: お風呂担当の配置 (ランクB)"""
@@ -437,7 +447,9 @@ class ConstraintManager:
                     # ペナルティ変数: お風呂スタッフが0名の場合に1
                     penalty_var = self.model.NewIntVar(0, 1, f"penalty_bath_{target_date.strftime('%m%d')}")
                     self.model.Add(sum(bath_staff_vars) + penalty_var >= 1)
-                    self.penalty_vars.append(penalty_var)
+                    # 詳細情報付きでペナルティ制約を記録
+                    self._add_penalty_constraint(penalty_var, None, target_date, "FR014",
+                                               f"{target_date.strftime('%m月%d日')}のお風呂担当不足")
                 
 
             
@@ -717,13 +729,29 @@ class ConstraintManager:
         """制約違反情報を取得"""
         violations = []
         
-        # ランクB制約の違反チェック
-        for penalty_var in self.penalty_vars:
+        # 詳細な違反情報を記録した制約をチェック
+        for penalty_var, staff_id, target_date, constraint_name, description in self.constraint_violations:
             if solver.Value(penalty_var) > 0:
                 violations.append({
                     'type': 'RankB',
-                    'penalty': solver.Value(penalty_var),
-                    'description': f'ランクB制約違反'
+                    'staff_id': staff_id,
+                    'date': target_date.strftime('%Y-%m-%d') if target_date else None,
+                    'message': description,
+                    'constraint_name': constraint_name,
+                    'penalty': solver.Value(penalty_var)
+                })
+        
+        # 従来のペナルティ変数（詳細情報がないもの）
+        recorded_penalty_ids = {id(penalty_var) for penalty_var, _, _, _, _ in self.constraint_violations}
+        for penalty_var in self.penalty_vars:
+            if id(penalty_var) not in recorded_penalty_ids and solver.Value(penalty_var) > 0:
+                violations.append({
+                    'type': 'RankB',
+                    'staff_id': None,
+                    'date': None,
+                    'message': 'ランクB制約違反',
+                    'constraint_name': 'Unknown',
+                    'penalty': solver.Value(penalty_var)
                 })
                 
         # ランクC制約の重みチェック  
@@ -731,8 +759,129 @@ class ConstraintManager:
             if solver.Value(weight_var) > 0:
                 violations.append({
                     'type': 'RankC',
-                    'weight': solver.Value(weight_var),
-                    'description': f'ランクC制約非最適'
+                    'staff_id': None,
+                    'date': None,
+                    'message': 'ランクC制約非最適',
+                    'constraint_name': 'RankC',
+                    'weight': solver.Value(weight_var)
                 })
                 
         return violations
+    
+    def _add_penalty_constraint(self, penalty_var, staff_id=None, target_date=None, 
+                               constraint_name="Unknown", description="制約違反"):
+        """ペナルティ制約と違反情報を記録"""
+        self.penalty_vars.append(penalty_var)
+        self.constraint_violations.append((penalty_var, staff_id, target_date, constraint_name, description))
+    
+    def _add_fr017_holiday_adjacent_optimization(self) -> None:
+        """FR017: 公休の前後配置最適化 (ランクC)"""
+        print("      - FR017: 公休の前後配置最適化")
+        
+        for staff in self.staff_list:
+            for i, target_date in enumerate(self.dates):
+                if i == 0 or i == len(self.dates) - 1:
+                    continue  # 月初・月末はスキップ
+                
+                prev_date = self.dates[i - 1]
+                next_date = self.dates[i + 1]
+                
+                # 公休の判定
+                holiday_var = self.model.NewBoolVar(f"holiday_{staff.id}_{target_date.day}")
+                self.model.Add(self.shift[(staff.id, target_date)] == ShiftType.PUBLIC_HOLIDAY.value).OnlyEnforceIf(holiday_var)
+                self.model.Add(self.shift[(staff.id, target_date)] != ShiftType.PUBLIC_HOLIDAY.value).OnlyEnforceIf(holiday_var.Not())
+                
+                # 前日の希望休・有給の判定
+                prev_special_var = self.model.NewBoolVar(f"prev_special_{staff.id}_{target_date.day}")
+                prev_is_request = self.model.NewBoolVar(f"prev_request_{staff.id}_{target_date.day}")
+                prev_is_paid = self.model.NewBoolVar(f"prev_paid_{staff.id}_{target_date.day}")
+                
+                self.model.Add(self.shift[(staff.id, prev_date)] == ShiftType.REQUEST_HOLIDAY.value).OnlyEnforceIf(prev_is_request)
+                self.model.Add(self.shift[(staff.id, prev_date)] != ShiftType.REQUEST_HOLIDAY.value).OnlyEnforceIf(prev_is_request.Not())
+                self.model.Add(self.shift[(staff.id, prev_date)] == ShiftType.PAID_HOLIDAY.value).OnlyEnforceIf(prev_is_paid)
+                self.model.Add(self.shift[(staff.id, prev_date)] != ShiftType.PAID_HOLIDAY.value).OnlyEnforceIf(prev_is_paid.Not())
+                
+                self.model.AddBoolOr([prev_is_request, prev_is_paid]).OnlyEnforceIf(prev_special_var)
+                self.model.AddBoolAnd([prev_is_request.Not(), prev_is_paid.Not()]).OnlyEnforceIf(prev_special_var.Not())
+                
+                # 翌日の希望休・有給の判定
+                next_special_var = self.model.NewBoolVar(f"next_special_{staff.id}_{target_date.day}")
+                next_is_request = self.model.NewBoolVar(f"next_request_{staff.id}_{target_date.day}")
+                next_is_paid = self.model.NewBoolVar(f"next_paid_{staff.id}_{target_date.day}")
+                
+                self.model.Add(self.shift[(staff.id, next_date)] == ShiftType.REQUEST_HOLIDAY.value).OnlyEnforceIf(next_is_request)
+                self.model.Add(self.shift[(staff.id, next_date)] != ShiftType.REQUEST_HOLIDAY.value).OnlyEnforceIf(next_is_request.Not())
+                self.model.Add(self.shift[(staff.id, next_date)] == ShiftType.PAID_HOLIDAY.value).OnlyEnforceIf(next_is_paid)
+                self.model.Add(self.shift[(staff.id, next_date)] != ShiftType.PAID_HOLIDAY.value).OnlyEnforceIf(next_is_paid.Not())
+                
+                self.model.AddBoolOr([next_is_request, next_is_paid]).OnlyEnforceIf(next_special_var)
+                self.model.AddBoolAnd([next_is_request.Not(), next_is_paid.Not()]).OnlyEnforceIf(next_special_var.Not())
+                
+                # 前後どちらかに希望休・有給がある場合の優遇
+                adjacent_special_var = self.model.NewBoolVar(f"adjacent_special_{staff.id}_{target_date.day}")
+                self.model.AddBoolOr([prev_special_var, next_special_var]).OnlyEnforceIf(adjacent_special_var)
+                self.model.AddBoolAnd([prev_special_var.Not(), next_special_var.Not()]).OnlyEnforceIf(adjacent_special_var.Not())
+                
+                # 公休で前後に特別休暇がない場合の重み変数（小さいほど良い）
+                weight_var = self.model.NewIntVar(0, 1, f"weight_fr017_{staff.id}_{target_date.day}")
+                optimization_var = self.model.NewBoolVar(f"optimize_fr017_{staff.id}_{target_date.day}")
+                
+                # 公休 AND 前後に特別休暇がない場合
+                self.model.AddBoolAnd([holiday_var, adjacent_special_var.Not()]).OnlyEnforceIf(optimization_var)
+                self.model.AddBoolOr([holiday_var.Not(), adjacent_special_var]).OnlyEnforceIf(optimization_var.Not())
+                
+                self.model.Add(weight_var == 1).OnlyEnforceIf(optimization_var)
+                self.model.Add(weight_var == 0).OnlyEnforceIf(optimization_var.Not())
+                
+                self.weight_vars.append(weight_var)
+
+    def _add_fr018_max_consecutive_holidays(self) -> None:
+        """FR018: 連休制限と2連休促進 (ランクB)"""
+        print("      - FR018: 連休制限と2連休促進")
+        
+        for staff in self.staff_list:
+            # 3連休以上の禁止（ランクB制約）
+            for i in range(len(self.dates) - 2):  # 3日連続をチェック
+                dates_triplet = self.dates[i:i+3]
+                
+                # 3日連続で休み（公休・希望休・有給）の判定
+                rest_vars = []
+                for date in dates_triplet:
+                    rest_var = self.model.NewBoolVar(f"rest_{staff.id}_{date.day}_fr018")
+                    
+                    # 休みの種類を判定
+                    is_public = self.model.NewBoolVar(f"public_{staff.id}_{date.day}_fr018")
+                    is_request = self.model.NewBoolVar(f"request_{staff.id}_{date.day}_fr018")
+                    is_paid = self.model.NewBoolVar(f"paid_{staff.id}_{date.day}_fr018")
+                    
+                    self.model.Add(self.shift[(staff.id, date)] == ShiftType.PUBLIC_HOLIDAY.value).OnlyEnforceIf(is_public)
+                    self.model.Add(self.shift[(staff.id, date)] != ShiftType.PUBLIC_HOLIDAY.value).OnlyEnforceIf(is_public.Not())
+                    self.model.Add(self.shift[(staff.id, date)] == ShiftType.REQUEST_HOLIDAY.value).OnlyEnforceIf(is_request)
+                    self.model.Add(self.shift[(staff.id, date)] != ShiftType.REQUEST_HOLIDAY.value).OnlyEnforceIf(is_request.Not())
+                    self.model.Add(self.shift[(staff.id, date)] == ShiftType.PAID_HOLIDAY.value).OnlyEnforceIf(is_paid)
+                    self.model.Add(self.shift[(staff.id, date)] != ShiftType.PAID_HOLIDAY.value).OnlyEnforceIf(is_paid.Not())
+                    
+                    # いずれかの休み
+                    self.model.AddBoolOr([is_public, is_request, is_paid]).OnlyEnforceIf(rest_var)
+                    self.model.AddBoolAnd([is_public.Not(), is_request.Not(), is_paid.Not()]).OnlyEnforceIf(rest_var.Not())
+                    
+                    rest_vars.append(rest_var)
+                
+                # 3日連続休みを禁止（ランクB制約）
+                consecutive_3_rest = self.model.NewBoolVar(f"consec3_rest_{staff.id}_{dates_triplet[0].day}")
+                self.model.AddBoolAnd(rest_vars).OnlyEnforceIf(consecutive_3_rest)
+                self.model.AddBoolOr([var.Not() for var in rest_vars]).OnlyEnforceIf(consecutive_3_rest.Not())
+                
+                # 3連休違反時のペナルティ変数
+                penalty_var = self.model.NewIntVar(0, 1000, f"penalty_fr018_{staff.id}_{dates_triplet[0].day}")
+                self.model.Add(penalty_var == 1000).OnlyEnforceIf(consecutive_3_rest)
+                self.model.Add(penalty_var == 0).OnlyEnforceIf(consecutive_3_rest.Not())
+                
+                # 違反情報を記録
+                self._add_penalty_constraint(
+                    penalty_var, 
+                    staff.id, 
+                    dates_triplet[1],  # 中央の日付を代表として使用
+                    "FR018",
+                    f"{staff.name}の{dates_triplet[0].day}-{dates_triplet[2].day}日に3連休が発生"
+                )

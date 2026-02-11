@@ -13,7 +13,7 @@ rules:
     - id: "FR003"
       rank: "A"
       title: "月木のお風呂配置"
-      description: "月曜日・木曜日は日勤+2名配置+お風呂1名"
+      description: "月曜日・木曜日は日勤+1名配置+お風呂1名"
 
     - id: "FR004"
       rank: "B"
@@ -91,6 +91,19 @@ rules:
       title: "介護士の勤務日数平均化"
       description: "『介護士』の勤務日数を平均化する"
 
+    - id: "FR017"
+      rank: "C"
+      title: "公休の前後配置最適化"
+      description: "公休はなるべく、希望休、有給の前後どちらかに１日付与する"
+      constraint_type: "holiday_adjacent_optimization"
+
+    - id: "FR018"
+      rank: "B"
+      title: "連休制限と2連休促進"
+      description: "休み（公休・希望休・有給）の連続は2日までとし、3連休以上は禁止する"
+      constraint_type: "max_consecutive_rest_days"
+      max_consecutive_days: 2
+
   personal_rules:
     - id: "PR001"
       rank: "A"
@@ -167,6 +180,22 @@ rules:
       title: "夜勤明けは公休"
       description: "夜勤明け[明]の次の日は必ず公休[休]とする"
       constraint_type: "day_off_after_night_shift"
+
+    - id: "PR010"
+      rank: "A"
+      staff_id: 14
+      staff_name: "大野正恵"
+      title: "夜勤不可"
+      description: "夜勤に入ることはできない"
+      constraint_type: "no_night_shift"
+
+    - id: "PR011"
+      rank: "A"
+      staff_id: 15
+      staff_name: "大上迫"
+      title: "夜勤不可"
+      description: "夜勤に入ることはできない"
+      constraint_type: "no_night_shift"
 
   relationship_rules:
     - id: "RR001"

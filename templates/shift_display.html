@@ -163,31 +163,65 @@
             overflow-x: auto;
             margin: 20px 0;
         }
-        .shift-table {
-            width: 100%;
-            border-collapse: collapse;
-            min-width: 1200px;
-        }
-        .shift-table th,
-        .shift-table td {
-            padding: 8px 4px;
-            text-align: center;
+        .shift-grid-container {
+            display: grid;
+            grid-template-columns: 150px repeat(31, 50px) repeat(6, 40px);
+            gap: 1px;
+            background: #dee2e6;
             border: 1px solid #dee2e6;
-            font-size: 14px;
+            overflow-x: auto;
+            min-width: 1200px;
+            margin: 20px 0;
         }
-        .shift-table th {
+        .shift-grid-item {
+            background: white;
+            padding: 6px 4px;
+            text-align: center;
+            font-size: 13px;
+            border: none;
+            min-height: 32px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            position: relative;
+        }
+        .staff-header {
+            grid-column: 1;
+            background: #f8f9fa;
+            padding: 15px 10px;
+            font-weight: bold;
+            text-align: center;
+        }
+        .day-header {
             background: #f8f9fa;
             font-weight: 600;
             position: sticky;
             top: 0;
             z-index: 10;
+            text-align: center;
+            padding: 4px 2px;
+            min-height: 44px;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
         }
-        .shift-table .day-of-week {
-            font-size: 11px;
+        .day-header .day-of-week {
+            font-size: 10px;
             color: #6c757d;
             font-weight: normal;
+            margin-top: 2px;
+            line-height: 1;
         }
-        .shift-table .staff-name {
+        .day-header .day-of-week.sunday {
+            color: #d32f2f !important;
+            font-weight: bold;
+        }
+        .day-header .day-of-week.saturday {
+            color: #1976d2 !important;
+            font-weight: bold;
+        }
+        .staff-name-cell {
             background: #f8f9fa;
             font-weight: 500;
             text-align: left;
@@ -195,10 +229,16 @@
             position: sticky;
             left: 0;
             min-width: 120px;
+            z-index: 5;
         }
         .shift-cell {
             position: relative;
+            cursor: pointer;
+            transition: background-color 0.2s;
             min-width: 35px;
+        }
+        .shift-cell:hover {
+            background-color: #e3f2fd !important;
         }
         .shift-cell.day {
             background: #e7f3ff;
@@ -285,6 +325,12 @@
             color: #1976d2 !important; 
             font-weight: bold;
         } /* 土曜日 */
+        /* 集計セルスタイル */
+        .staff-summary, .daily-summary {
+            background: #f8f9fa;
+            font-weight: bold;
+            font-size: 12px;
+        }
         .summary-cell {
             background: #f8f9fa;
             font-weight: bold;
@@ -466,9 +512,9 @@
                         <div id="no-data-message" class="alert alert-info" style="display: block;">
                             📅 シフトデータがありません。「シフト生成」ボタンを押してシフトを作成してください。
                         </div>
-                        <table id="shift-table-data" class="shift-table" style="display: none;">
+                        <div id="shift-grid-container" class="shift-grid-container" style="display: none;">
                             <!-- JavaScriptで動的に生成 -->
-                        </table>
+                        </div>
                     </div>
                 </div>
 
@@ -533,10 +579,19 @@
                     shiftData = result.data;
                     displayShiftData();
                     showAlert('info', '既存のシフトデータを読み込みました');
+                } else if (result.status === 'no_data') {
+                    // データがない場合は何も表示しない
+                    shiftData = null;
+                    clearShiftData();
+                    showAlert('info', result.message || 'シフト生成ボタンを押してシフトを作成してください');
                 } else {
+                    shiftData = null;
+                    clearShiftData();
                     showAlert('info', 'シフト生成ボタンを押してシフトを作成してください');
                 }
             } catch (error) {
+                shiftData = null;
+                clearShiftData();
                 showAlert('info', 'シフト生成ボタンを押してシフトを作成してください');
             } finally {
                 showLoading(false);
@@ -587,14 +642,14 @@
             }
 
             console.log('プレースホルダー非表示処理');
-            // プレースホルダーを非表示にしてシフト表を表示
+            // プレースホルダーを非表示にしてシフトGridを表示
             const noDataMessage = document.getElementById('no-data-message');
-            const shiftTable = document.getElementById('shift-table-data');
+            const shiftGrid = document.getElementById('shift-grid-container');
             console.log('no-data-message要素:', noDataMessage);
-            console.log('shift-table-data要素:', shiftTable);
-            if (noDataMessage && shiftTable) {
+            console.log('shift-grid-container要素:', shiftGrid);
+            if (noDataMessage && shiftGrid) {
                 noDataMessage.style.display = 'none';
-                shiftTable.style.display = 'table';
+                shiftGrid.style.display = 'grid';
                 console.log('表示切り替え完了');
             }
             
@@ -604,7 +659,13 @@
             
             console.log('シフト表表示開始');
             // シフト表表示
-            displayShiftTable();
+            try {
+                displayShiftTable();
+                console.log('シフト表表示完了');
+            } catch (error) {
+                console.error('シフト表表示エラー:', error);
+                showAlert('danger', 'シフト表の表示中にエラーが発生しました: ' + error.message);
+            }
             
             console.log('=== displayShiftData完了 ===');
             
@@ -647,106 +708,438 @@
             `;
         }
 
-        // シフト表表示
+        // シフトGrid表示（新CSS Grid版）
         function displayShiftTable() {
-            const table = document.getElementById('shift-table-data');
+            console.log('=== displayShiftTable開始 ===');
+            const gridContainer = document.getElementById('shift-grid-container');
+            
+            if (!gridContainer) {
+                console.error('❌ shift-grid-container要素が見つかりません');
+                return;
+            }
+            
+            if (!shiftData) {
+                console.error('❌ shiftDataがnullです');
+                gridContainer.innerHTML = '<div class="shift-grid-item">シフトデータがありません</div>';
+                return;
+            }
             
             if (!shiftData.shift_table) {
-                table.innerHTML = '<tr><td>シフト表データが生成されていません</td></tr>';
+                console.error('❌ shift_tableがありません');
+                gridContainer.innerHTML = '<div class="shift-grid-item">シフト表データが生成されていません</div>';
                 return;
             }
 
-            // 日毎・スタッフ毎集計計算
-            const dailySummary = calculateDailySummary();
-            const staffSummaries = calculateStaffSummaries();
+            console.log('✅ 基本チェック完了');
 
-            // 曜日計算関数
-            function getDayOfWeek(year, month, day) {
-                const date = new Date(year, month - 1, day);
-                const dayNames = ['日', '月', '火', '水', '木', '金', '土'];
-                return dayNames[date.getDay()];
-            }
+            try {
+                // 日毎・スタッフ毎集計計算
+                console.log('📊 集計計算開始...');
+                const dailySummary = calculateDailySummary();
+                const staffSummaries = calculateStaffSummaries();
+                console.log('✅ 集計計算完了', { dailySummary, staffSummaries });
 
-            // ヘッダー行生成（日付 + 曜日 + 集計列）
-            let headerHtml = '<thead>';
-            // 1行目: 日付
-            headerHtml += '<tr><th class="staff-name" rowspan="2">スタッフ</th>';
-            for (let day = 1; day <= 31; day++) {
-                headerHtml += `<th>${day}</th>`;
-            }
-            headerHtml += '<th class="summary-header" rowspan="2">日</th>';
-            headerHtml += '<th class="summary-header" rowspan="2">夜</th>';
-            headerHtml += '<th class="summary-header" rowspan="2">明</th>';
-            headerHtml += '<th class="summary-header" rowspan="2">休</th>';
-            headerHtml += '<th class="summary-header" rowspan="2">希</th>';
-            headerHtml += '<th class="summary-header" rowspan="2">有</th>';
-            headerHtml += '</tr>';
-            // 2行目: 曜日
-            headerHtml += '<tr>';
-            const monthSelectValue = document.getElementById('month-select').value;
-            const [currentYear, currentMonth] = monthSelectValue.split('-').map(Number);
-            for (let day = 1; day <= 31; day++) {
-                const dayOfWeek = getDayOfWeek(currentYear, currentMonth, day);
-                let dayClass = '';
-                if (dayOfWeek === '日') dayClass = ' sunday';
-                else if (dayOfWeek === '土') dayClass = ' saturday';
-                headerHtml += `<th class="day-of-week${dayClass}">${dayOfWeek}</th>`;
-            }
-            headerHtml += '</tr></thead>';
+                // 曜日計算関数
+                function getDayOfWeek(year, month, day) {
+                    const date = new Date(year, month - 1, day);
+                    const dayNames = ['日', '月', '火', '水', '木', '金', '土'];
+                    return dayNames[date.getDay()];
+                }
 
-            // データ行生成（各スタッフ + 集計）
-            let bodyHtml = '<tbody>';
-            if (shiftData.shift_table.rows) {
-                shiftData.shift_table.rows.forEach((row, index) => {
-                    bodyHtml += `<tr>`;
-                    bodyHtml += `<td class="staff-name">${row.staff_name}</td>`;
-                    for (let day = 1; day <= 31; day++) {
-                        const cellData = row.days && row.days[day] ? row.days[day] : '';
-                        const cellClass = getCellClass(cellData);
-                        bodyHtml += `<td class="shift-cell ${cellClass}">${cellData || ''}</td>`;
+                // Grid要素をクリア
+                console.log('🧹 Grid要素クリア...');
+                gridContainer.innerHTML = '';
+                
+                const monthSelectValue = document.getElementById('month-select').value;
+                if (!monthSelectValue) {
+                    throw new Error('month-select要素の値が取得できません');
+                }
+                
+                const [currentYear, currentMonth] = monthSelectValue.split('-').map(Number);
+                
+                // 該当月の実際の日数を取得
+                const daysInMonth = new Date(currentYear, currentMonth, 0).getDate();
+                console.log(`📅 対象月: ${monthSelectValue}, 日数: ${daysInMonth}`);
+                
+                // Grid列数を動的に設定
+                gridContainer.style.gridTemplateColumns = `150px repeat(${daysInMonth}, 50px) repeat(6, 40px)`;
+                console.log('✅ Grid列設定完了');
+
+                // 1. スタッフヘッダー
+                console.log('👤 スタッフヘッダー作成...');
+                const staffHeader = document.createElement('div');
+                staffHeader.className = 'shift-grid-item staff-header';
+                staffHeader.textContent = 'スタッフ';
+                gridContainer.appendChild(staffHeader);
+                
+                // 2. 日付ヘッダー（実際の日数分）
+                console.log('📅 日付ヘッダー作成...');
+                for (let day = 1; day <= daysInMonth; day++) {
+                    try {
+                        const dayHeader = document.createElement('div');
+                        dayHeader.className = 'shift-grid-item day-header';
+                        const dayOfWeek = getDayOfWeek(currentYear, currentMonth, day);
+                        let dayClass = '';
+                        if (dayOfWeek === '日') dayClass = ' sunday';
+                        else if (dayOfWeek === '土') dayClass = ' saturday';
+                        
+                        // より安全な DOM構築
+                        const dayDiv = document.createElement('div');
+                        dayDiv.textContent = day;
+                        
+                        const dowDiv = document.createElement('div');
+                        dowDiv.className = 'day-of-week' + dayClass;
+                        dowDiv.textContent = dayOfWeek;
+                        
+                        dayHeader.appendChild(dayDiv);
+                        dayHeader.appendChild(dowDiv);
+                        gridContainer.appendChild(dayHeader);
+                    } catch (error) {
+                        console.error(`❌ 日付ヘッダー${day}でエラー:`, error);
+                        throw error;
+                    }
+                }
+                console.log('✅ 日付ヘッダー完了');
+                
+                // 3. 集計ヘッダー
+                console.log('📊 集計ヘッダー作成...');
+                const summaryHeaders = ['日', '夜', '明', '休', '希', '有'];
+                summaryHeaders.forEach(headerText => {
+                    const header = document.createElement('div');
+                    header.className = 'shift-grid-item summary-header';
+                    header.textContent = headerText;
+                    gridContainer.appendChild(header);
+                });
+                console.log('✅ 集計ヘッダー完了');
+
+                // 4. スタッフデータ行
+                console.log('👥 スタッフデータ行作成...');
+                if (shiftData.shift_table.rows) {
+                    shiftData.shift_table.rows.forEach((row, rowIndex) => {
+                        // スタッフ名セル
+                        const staffNameCell = document.createElement('div');
+                        staffNameCell.className = 'shift-grid-item staff-name-cell';
+                        staffNameCell.textContent = row.staff_name;
+                        gridContainer.appendChild(staffNameCell);
+                        
+                        // シフトデータセル（実際の日数分）
+                        for (let day = 1; day <= daysInMonth; day++) {
+                            const cellData = row.days && row.days[day] ? row.days[day] : '';
+                            const shiftCell = document.createElement('div');
+                            shiftCell.className = `shift-grid-item shift-cell ${getCellClass(cellData)}`;
+                            shiftCell.textContent = cellData || '';
+                            shiftCell.dataset.staffIndex = rowIndex;
+                            shiftCell.dataset.day = day;
+                            shiftCell.dataset.staffName = row.staff_name;
+                            // クリックイベント追加
+                            shiftCell.style.cursor = 'pointer';
+                            shiftCell.addEventListener('click', function(event) {
+                                handleShiftCellClick(event);
+                            });
+                            gridContainer.appendChild(shiftCell);
+                        }
+                        
+                        // スタッフ別集計セル
+                        const summary = staffSummaries && staffSummaries[rowIndex] 
+                            ? staffSummaries[rowIndex] 
+                            : {日: 0, 夜: 0, 明: 0, 休: 0, 希: 0, 有: 0};
+                        ['日', '夜', '明', '休', '希', '有'].forEach(type => {
+                            const summaryCell = document.createElement('div');
+                            summaryCell.className = 'shift-grid-item staff-summary';
+                            summaryCell.textContent = summary[type] || 0;
+                            gridContainer.appendChild(summaryCell);
+                        });
+                    });
+                }
+                console.log('✅ スタッフデータ行完了');
+                
+                // 5. 日毎集計行
+                console.log('📅 日毎集計行作成...');
+                const totalRowHeader = document.createElement('div');
+                totalRowHeader.className = 'shift-grid-item staff-name-cell';
+                totalRowHeader.textContent = '合計';
+                gridContainer.appendChild(totalRowHeader);
+                
+                // 各日の合計
+                for (let day = 1; day <= daysInMonth; day++) {
+                    const dayData = dailySummary[day] || {};
+                    const totalCount = (dayData.日 || 0) + (dayData.夜 || 0) + (dayData.明 || 0) + 
+                                     (dayData.休 || 0) + (dayData.希 || 0) + (dayData.有 || 0);
+                    const totalCell = document.createElement('div');
+                    totalCell.className = 'shift-grid-item daily-summary';
+                    totalCell.textContent = totalCount;
+                    totalCell.title = `日:${dayData.日||0} 夜:${dayData.夜||0} 明:${dayData.明||0} 休:${dayData.休||0} 希:${dayData.希||0} 有:${dayData.有||0}`;
+                    gridContainer.appendChild(totalCell);
+                }
+                
+                // 合計行の集計セル
+                for (let i = 0; i < 6; i++) {
+                    const emptyCell = document.createElement('div');
+                    emptyCell.className = 'shift-grid-item summary-cell';
+                    emptyCell.textContent = '-';
+                    gridContainer.appendChild(emptyCell);
+                }
+                console.log('✅ 日毎集計行完了');
+                
+                // 6. 詳細日毎集計行
+                console.log('📊 詳細日毎集計行作成...');
+                const shiftTypes = ['日', '夜', '明', '休', '希', '有'];
+                shiftTypes.forEach(shiftType => {
+                    // シフトタイプ名セル
+                    const typeHeader = document.createElement('div');
+                    typeHeader.className = 'shift-grid-item staff-name-cell';
+                    typeHeader.textContent = shiftType;
+                    gridContainer.appendChild(typeHeader);
+                    
+                    // 各日のシフトタイプ別カウント
+                    for (let day = 1; day <= daysInMonth; day++) {
+                        const count = dailySummary[day] ? (dailySummary[day][shiftType] || 0) : 0;
+                        const countCell = document.createElement('div');
+                        countCell.className = 'shift-grid-item daily-summary';
+                        countCell.textContent = count;
+                        gridContainer.appendChild(countCell);
                     }
                     
-                    // スタッフ別集計列
-                    const summary = staffSummaries[index] || {日: 0, 夜: 0, 明: 0, 休: 0, 希: 0, 有: 0};
-                    bodyHtml += `<td class="staff-summary">${summary.日}</td>`;
-                    bodyHtml += `<td class="staff-summary">${summary.夜}</td>`;
-                    bodyHtml += `<td class="staff-summary">${summary.明}</td>`;
-                    bodyHtml += `<td class="staff-summary">${summary.休}</td>`;
-                    bodyHtml += `<td class="staff-summary">${summary.希}</td>`;
-                    bodyHtml += `<td class="staff-summary">${summary.有}</td>`;
-                    bodyHtml += `</tr>`;
+                    // 詳細集計行の集計セル
+                    for (let i = 0; i < 6; i++) {
+                        const emptyCell = document.createElement('div');
+                        emptyCell.className = 'shift-grid-item summary-cell';
+                        emptyCell.textContent = '-';
+                        gridContainer.appendChild(emptyCell);
+                    }
+                });
+                console.log('✅ 詳細日毎集計行完了');
+
+                console.log('✅ displayShiftTable完了');
+
+            } catch (error) {
+                console.error('❌ displayShiftTable内エラー:', error);
+                console.error('エラースタック:', error.stack);
+                gridContainer.innerHTML = `<div class="shift-grid-item">エラーが発生しました: ${error.message}</div>`;
+                throw error;
+            }
+        }
+
+        // シフトセルクリックハンドラ（Phase 2: インタラクティブ機能） 
+        function handleShiftCellClick(event) {
+            const cell = event.target;
+            const staffIndex = parseInt(cell.dataset.staffIndex);
+            const day = parseInt(cell.dataset.day);
+            const staffName = cell.dataset.staffName;
+            const currentValue = cell.textContent.trim();
+            
+            // シフト選択肢（空白なし、循環ローテーション）
+            const shiftOptions = ['日', '夜', '明', '休', '希', '有'];
+            let currentIndex = shiftOptions.indexOf(currentValue);
+            
+            // 現在の値が見つからない場合は最初の選択肢にする
+            if (currentIndex === -1) {
+                currentIndex = 0;
+            } else {
+                // 次の選択肢に切り替え（サイクリック）
+                currentIndex = (currentIndex + 1) % shiftOptions.length;
+            }
+            const newValue = shiftOptions[currentIndex];
+            
+            // UI更新
+            cell.textContent = newValue;
+            cell.className = `shift-grid-item shift-cell ${getCellClass(newValue)}`;
+            
+            // データ更新
+            if (shiftData && shiftData.shift_table && shiftData.shift_table.rows && 
+                shiftData.shift_table.rows[staffIndex]) {
+                if (!shiftData.shift_table.rows[staffIndex].days) {
+                    shiftData.shift_table.rows[staffIndex].days = {};
+                }
+                shiftData.shift_table.rows[staffIndex].days[day] = newValue;
+                
+                console.log('📝 データ更新:', {
+                    staffIndex: staffIndex,
+                    day: day,
+                    oldValue: currentValue,
+                    newValue: newValue,
+                    updatedData: shiftData.shift_table.rows[staffIndex].days[day]
                 });
             }
             
-            // 日毎集計行
-            bodyHtml += '<tr class="daily-summary-row">';
-            bodyHtml += '<td class="staff-name">合計</td>';
-            for (let day = 1; day <= 31; day++) {
-                const dayData = dailySummary[day] || {};
-                const totalCount = (dayData.日 || 0) + (dayData.夜 || 0) + (dayData.明 || 0) + (dayData.休 || 0) + (dayData.希 || 0) + (dayData.有 || 0);
-                bodyHtml += `<td class="daily-summary" title="日:${dayData.日||0} 夜:${dayData.夜||0} 明:${dayData.明||0} 休:${dayData.休||0} 希:${dayData.希||0} 有:${dayData.有||0}">${totalCount}</td>`;
+            console.log(`${staffName} の ${day}日: ${currentValue} → ${newValue}`);
+            
+            // 集計の再計算と表示更新
+            try {
+                console.log('🔄 集計更新開始...');
+                updateSummaries();
+                console.log('✅ 集計更新完了');
+            } catch (error) {
+                console.error('❌ 集計更新エラー:', error);
             }
-            bodyHtml += '<td class="summary-cell">-</td><td class="summary-cell">-</td><td class="summary-cell">-</td><td class="summary-cell">-</td><td class="summary-cell">-</td><td class="summary-cell">-</td>';
-            bodyHtml += '</tr>';
             
-            // 詳細日毎集計行（各シフト区分別）
-            const shiftTypes = ['日', '夜', '明', '休', '希', '有'];
-            shiftTypes.forEach(shiftType => {
-                bodyHtml += `<tr class="daily-summary-row">`;
-                bodyHtml += `<td class="staff-name">${shiftType}</td>`;
-                for (let day = 1; day <= 31; day++) {
-                    const count = dailySummary[day] ? (dailySummary[day][shiftType] || 0) : 0;
-                    bodyHtml += `<td class="daily-summary">${count}</td>`;
-                }
-                bodyHtml += '<td class="summary-cell">-</td><td class="summary-cell">-</td><td class="summary-cell">-</td><td class="summary-cell">-</td><td class="summary-cell">-</td><td class="summary-cell">-</td>';
-                bodyHtml += '</tr>';
-            });
-            
-            bodyHtml += '</tbody>';
-            table.innerHTML = headerHtml + bodyHtml;
+            // TODO: バックエンドへの保存APIコール
         }
 
-        // セルクラス取得
+        // 集計値更新関数
+        function updateSummaries() {
+            if (!shiftData || !shiftData.shift_table || !shiftData.shift_table.rows) {
+                console.warn('シフトデータが存在しません');
+                return;
+            }
+
+            console.log('📊 集計更新開始...');
+            
+            // 統計データを再計算
+            const staffSummaries = calculateStaffSummaries();
+            const dailySummary = calculateDailySummary();
+            
+            console.log('✅ 統計計算完了', { staffSummaries, dailySummary });
+            
+            // Grid右側のスタッフ別集計を更新
+            updateStaffSummaryDisplay(staffSummaries);
+            
+            // Grid下部の日毎集計を更新
+            updateDailySummaryDisplay(dailySummary);
+            
+            // 統計パネルも更新（既存の処理）
+            recalculateStatistics();
+            displayStatistics();
+            updateStatusCards();
+            
+            console.log('✅ 集計値更新完了');
+        }
+
+        // Grid右側のスタッフ別集計表示を更新
+        function updateStaffSummaryDisplay(staffSummaries) {
+            const summaryElements = document.querySelectorAll('.staff-summary');
+            const shiftTypes = ['日', '夜', '明', '休', '希', '有'];
+            
+            console.log('📊 スタッフ別集計更新:', {
+                summaryElements: summaryElements.length,
+                staffSummaries: staffSummaries.length
+            });
+            
+            let elementIndex = 0;
+            staffSummaries.forEach((summary, staffIndex) => {
+                shiftTypes.forEach(type => {
+                    if (elementIndex < summaryElements.length) {
+                        const oldValue = summaryElements[elementIndex].textContent;
+                        const newValue = summary[type] || 0;
+                        summaryElements[elementIndex].textContent = newValue;
+                        
+                        console.log(`スタッフ${staffIndex} ${type}: ${oldValue} → ${newValue}`);
+                        elementIndex++;
+                    }
+                });
+            });
+            
+            console.log('✅ スタッフ別集計表示更新完了');
+        }
+
+        // Grid下部の日毎集計表示を更新
+        function updateDailySummaryDisplay(dailySummary) {
+            const dailySummaryElements = document.querySelectorAll('.daily-summary');
+            
+            console.log('📅 日毎集計更新:', {
+                dailySummaryElements: dailySummaryElements.length,
+                dailySummary: Object.keys(dailySummary).length
+            });
+            
+            // 月情報を取得
+            const monthSelectValue = document.getElementById('month-select').value;
+            const [currentYear, currentMonth] = monthSelectValue.split('-').map(Number);
+            const daysInMonth = new Date(currentYear, currentMonth, 0).getDate();
+            
+            // 日毎集計行（合計行）の更新
+            for (let day = 1; day <= daysInMonth; day++) {
+                const dayData = dailySummary[day] || {};
+                const totalCount = (dayData.日 || 0) + (dayData.夜 || 0) + (dayData.明 || 0) + 
+                                 (dayData.休 || 0) + (dayData.希 || 0) + (dayData.有 || 0);
+                
+                const elementIndex = day - 1; // 0ベース
+                if (elementIndex < dailySummaryElements.length) {
+                    const oldValue = dailySummaryElements[elementIndex].textContent;
+                    dailySummaryElements[elementIndex].textContent = totalCount;
+                    dailySummaryElements[elementIndex].title = 
+                        `日:${dayData.日||0} 夜:${dayData.夜||0} 明:${dayData.明||0} 休:${dayData.休||0} 希:${dayData.希||0} 有:${dayData.有||0}`;
+                    
+                    console.log(`日付${day} 合計: ${oldValue} → ${totalCount}`);
+                }
+            }
+            
+            // 詳細日毎集計行の更新
+            const shiftTypes = ['日', '夜', '明', '休', '希', '有'];
+            shiftTypes.forEach((shiftType, typeIndex) => {
+                for (let day = 1; day <= daysInMonth; day++) {
+                    const count = dailySummary[day] ? (dailySummary[day][shiftType] || 0) : 0;
+                    const elementIndex = daysInMonth + (typeIndex * daysInMonth) + (day - 1);
+                    
+                    if (elementIndex < dailySummaryElements.length) {
+                        const oldValue = dailySummaryElements[elementIndex].textContent;
+                        dailySummaryElements[elementIndex].textContent = count;
+                        
+                        console.log(`${shiftType}${day}日: ${oldValue} → ${count}`);
+                    }
+                }
+            });
+            
+            console.log('✅ 日毎集計表示更新完了');
+        }
+
+        // 統計データ再計算
+        function recalculateStatistics() {
+            const staffStats = [];
+            
+            // 各スタッフの統計を計算
+            shiftData.shift_table.rows.forEach((staffRow) => {
+                const stats = {
+                    staff_id: staffRow.staff_id,
+                    staff_name: staffRow.staff_name,
+                    staff_class: staffRow.staff_class,
+                    day_shifts: 0,
+                    night_shifts: 0,
+                    night_off_shifts: 0,
+                    holidays: 0,
+                    request_holidays: 0,
+                    paid_holidays: 0,
+                    total_shifts: 0
+                };
+
+                // 各日の勤務を集計
+                if (staffRow.days) {
+                    Object.values(staffRow.days).forEach(shift => {
+                        switch (shift) {
+                            case '日':
+                                stats.day_shifts++;
+                                stats.total_shifts++;
+                                break;
+                            case '夜':
+                                stats.night_shifts++;
+                                stats.total_shifts++;
+                                break;
+                            case '明':
+                                stats.night_off_shifts++;
+                                break;
+                            case '休':
+                                stats.holidays++;
+                                break;
+                            case '希':
+                                stats.request_holidays++;
+                                break;
+                            case '有':
+                                stats.paid_holidays++;
+                                break;
+                        }
+                    });
+                }
+
+                staffStats.push(stats);
+            });
+
+            // shiftData.statisticsを更新
+            if (!shiftData.statistics) {
+                shiftData.statistics = {};
+            }
+            shiftData.statistics.staff_stats = staffStats;
+            
+            console.log('統計データ再計算完了:', staffStats);
+        }
         function getCellClass(value) {
             if (!value) return '';
             
@@ -761,7 +1154,7 @@
             }
         }
         
-        // 日毎集計計算
+        // 日毎集計計算（動的日数対応）
         function calculateDailySummary() {
             const dailySummary = {};
             
@@ -769,8 +1162,13 @@
                 return dailySummary;
             }
             
+            // 現在の月の実際の日数を取得
+            const monthSelectValue = document.getElementById('month-select').value;
+            const [currentYear, currentMonth] = monthSelectValue.split('-').map(Number);
+            const daysInMonth = new Date(currentYear, currentMonth, 0).getDate();
+            
             // 各日について集計
-            for (let day = 1; day <= 31; day++) {
+            for (let day = 1; day <= daysInMonth; day++) {
                 dailySummary[day] = {日: 0, 夜: 0, 明: 0, 休: 0, 希: 0, 有: 0};
                 
                 shiftData.shift_table.rows.forEach(row => {
@@ -788,7 +1186,7 @@
             return dailySummary;
         }
         
-        // スタッフ別集計計算
+        // スタッフ別集計計算（動的日数対応）
         function calculateStaffSummaries() {
             const staffSummaries = [];
             
@@ -796,10 +1194,15 @@
                 return staffSummaries;
             }
             
+            // 現在の月の実際の日数を取得
+            const monthSelectValue = document.getElementById('month-select').value;
+            const [currentYear, currentMonth] = monthSelectValue.split('-').map(Number);
+            const daysInMonth = new Date(currentYear, currentMonth, 0).getDate();
+            
             shiftData.shift_table.rows.forEach(row => {
                 const summary = {日: 0, 夜: 0, 明: 0, 休: 0, 希: 0, 有: 0};
                 
-                for (let day = 1; day <= 31; day++) {
+                for (let day = 1; day <= daysInMonth; day++) {
                     const cellData = row.days && row.days[day] ? row.days[day] : '';
                     if (cellData) {
                         // '公'を'休'として統一
@@ -897,21 +1300,249 @@
                 return;
             }
 
-            let htmlContent = '<ul class="violation-list">';
+            // デバッグ用：違反データ構造を詳細確認
+            console.log('=== 違反データ詳細確認 ===');
+            console.log('違反データ件数:', shiftData.violations.length);
+            console.log('全違反データ:', shiftData.violations);
             
-            shiftData.violations.forEach(violation => {
+            // 最初の3つのデータを完全に出力
+            shiftData.violations.slice(0, 3).forEach((violation, index) => {
+                console.log(`\n--- 違反データ[${index}] ---`);
+                console.log('全フィールド:', Object.keys(violation));
+                console.log('データ内容:', JSON.stringify(violation, null, 2));
+            });
+            
+            // 改善されたフィルタリング条件（より緩い条件）
+            const validViolations = shiftData.violations.filter(v => {
+                console.log('フィルタリング対象:', v);
+                // 違反タイプが存在し、空白でないメッセージがある、または具体的なスタッフ情報がある
+                const isValid = v.type && (
+                    (v.message && v.message !== '' && v.message !== '詳細不明') ||
+                    v.staff_id !== null ||
+                    v.date !== null ||
+                    v.constraint_name
+                );
+                console.log(`  >>> 有効判定: ${isValid}`);
+                return isValid;
+            });
+            
+            console.log('フィルタリング後の有効な違反データ:', validViolations);
+            console.log('有効な違反データ件数:', validViolations.length);
+
+            if (validViolations.length === 0) {
+                // データが不完全な場合の表示
+                violationsContent.innerHTML = `
+                    <div class="alert" style="background: #fff3cd; color: #856404; border: 1px solid #ffeaa7;">
+                        <h4>⚠️ 制約違反データについて</h4>
+                        <p><strong>検出された違反件数:</strong> ${shiftData.violations.length}件</p>
+                        <p><strong>問題:</strong> バックエンドから送られる違反データに以下の情報が不足しています：</p>
+                        <ul>
+                            <li>🔹 スタッフ情報（staff_id が null）</li>
+                            <li>🔹 日付情報（date が null）</li>
+                            <li>🔹 具体的な違反内容（message が空）</li>
+                        </ul>
+                        
+                        <div style="margin-top: 15px; padding: 15px; background: #f8f9fa; border-radius: 5px;">
+                            <strong>現在判明している情報:</strong><br>
+                            <div style="margin: 10px 0;">
+                                ${shiftData.violations.map(v => `• ${v.type === 'RankB' ? '軽微な制約違反' : v.type === 'RankA' ? '重要な制約違反' : v.type}`).join('<br>')}
+                            </div>
+                        </div>
+                        
+                        <p><small><strong>対処方法:</strong> バックエンドの違反検出ロジックで、staff_id、date、messageフィールドを正しく設定する必要があります。</small></p>
+                    </div>
+                `;
+                return;
+            }
+
+            // 有効なデータがある場合の通常処理
+            console.log('>>> 有効な違反データが存在するため、詳細表示を開始します');
+            let htmlContent = '<h4>制約違反の詳細</h4>';
+            htmlContent += '<div class="violations-detailed">';
+            
+            // 違反を種類別にグループ化
+            const violationGroups = {};
+            
+            validViolations.forEach((violation, index) => {
+                console.log(`処理中の違反[${index}]:`, violation);
+                
+                // スタッフ名の特定（より柔軟に）
+                let staffName = 'スタッフ不明';
+                const staffFields = ['staff_name', 'name', 'worker_name', 'employee_name', 'user_name'];
+                const idFields = ['staff_id', 'worker_id', 'employee_id', 'user_id', 'id'];
+                
+                // 直接的な名前フィールドを探す
+                for (let field of staffFields) {
+                    if (violation[field]) {
+                        staffName = violation[field];
+                        break;
+                    }
+                }
+                
+                // 名前が見つからない場合、IDからスタッフ名を検索
+                if (staffName === 'スタッフ不明') {
+                    let staffId = null;
+                    for (let field of idFields) {
+                        if (violation[field] !== undefined && violation[field] !== null) {
+                            staffId = violation[field];
+                            break;
+                        }
+                    }
+                    
+                    if (staffId !== null && shiftData.shift_table && shiftData.shift_table.rows) {
+                        const staffRow = shiftData.shift_table.rows.find(row => 
+                            row.staff_id == staffId || row.id == staffId || row.index == staffId
+                        );
+                        if (staffRow) {
+                            staffName = staffRow.staff_name || staffRow.name || `スタッフ${staffId}`;
+                        } else {
+                            staffName = `スタッフID: ${staffId}`;
+                        }
+                    }
+                }
+
+                // 日付の特定（より柔軟に）
+                let targetDate = '日付不明';
+                const dateFields = ['date', 'target_date', 'violation_date', 'day_date'];
+                const dayFields = ['day', 'day_index', 'target_day', 'violation_day'];
+                
+                // 直接的な日付フィールドを探す
+                for (let field of dateFields) {
+                    if (violation[field]) {
+                        targetDate = violation[field];
+                        break;
+                    }
+                }
+                
+                // 日付が見つからない場合、日数から構成
+                if (targetDate === '日付不明') {
+                    let dayNumber = null;
+                    for (let field of dayFields) {
+                        if (violation[field] !== undefined && violation[field] !== null) {
+                            dayNumber = violation[field];
+                            break;
+                        }
+                    }
+                    
+                    if (dayNumber !== null) {
+                        const [year, month] = currentMonth.split('-');
+                        targetDate = `${year}年${month}月${dayNumber}日`;
+                    }
+                }
+
+                // 違反内容の特定（より詳しく）
+                let violationDescription = '制約違反';
+                const descFields = ['constraint_name', 'rule_name', 'violation_type', 'constraint_type', 'message', 'description', 'reason'];
+                
+                // 説明フィールドを探す
+                for (let field of descFields) {
+                    if (violation[field] && violation[field] !== '詳細不明' && violation[field] !== '') {
+                        violationDescription = violation[field];
+                        break;
+                    }
+                }
+                
+                // まだ見つからない場合、typeから推測
+                if (violationDescription === '制約違反' && violation.type) {
+                    const typeMapping = {
+                        'consecutive_night': '連続夜勤制約違反',
+                        'max_shifts_per_month': '月間シフト数制限違反',
+                        'min_rest_days': '最小休日数制約違反',
+                        'holiday_request': '希望休制約違反',
+                        'night_shift_limit': '夜勤回数制限違反',
+                        'rest_after_night': '夜勤後休み制約違反',
+                        'weekend_coverage': '週末カバー制約違反',
+                        'RankB': '軽微な制約違反',
+                        'RankA': '重要な制約違反'
+                    };
+                    violationDescription = typeMapping[violation.type] || violation.type;
+                }
+                
+                console.log(`抽出結果 - スタッフ: "${staffName}", 日付: "${targetDate}", 違反: "${violationDescription}"`);
+
+                const violationKey = `${staffName}_${targetDate}_${violationDescription}`;
+                if (!violationGroups[violationKey]) {
+                    violationGroups[violationKey] = {
+                        staffName,
+                        targetDate,
+                        violationDescription,
+                        count: 0,
+                        details: []
+                    };
+                }
+                violationGroups[violationKey].count++;
+                violationGroups[violationKey].details.push(violation);
+            });
+
+            // グループ化された違反を表示
+            Object.values(violationGroups).forEach(group => {
+                const severity = group.details[0].type === 'RankA' ? 'high' : 'medium';
                 htmlContent += `
-                    <li class="violation-item">
-                        <div class="violation-type">${violation.type || '制約違反'}</div>
-                        <div>${violation.message || '詳細不明'}</div>
-                        ${violation.staff_id ? `<small>スタッフID: ${violation.staff_id}</small>` : ''}
-                        ${violation.date ? `<small>日付: ${violation.date}</small>` : ''}
-                    </li>
+                    <div class="violation-detail-item ${severity}">
+                        <div class="violation-header">
+                            <strong>👤 ${group.staffName}</strong> - 📅 ${group.targetDate}
+                        </div>
+                        <div class="violation-content">
+                            <div class="violation-rule">⚠️ ${group.violationDescription}</div>
+                            ${group.count > 1 ? `<div class="violation-count">同種違反: ${group.count}件</div>` : ''}
+                            ${group.details[0].details ? `<div class="violation-details">詳細: ${group.details[0].details}</div>` : ''}
+                        </div>
+                    </div>
                 `;
             });
             
-            htmlContent += '</ul>';
+            htmlContent += '</div>';
+            
+            // スタイルも追加
+            htmlContent += `
+                <style>
+                .violations-detailed {
+                    max-height: 400px;
+                    overflow-y: auto;
+                }
+                .violation-detail-item {
+                    margin-bottom: 15px;
+                    padding: 15px;
+                    border-radius: 8px;
+                    border-left: 4px solid;
+                }
+                .violation-detail-item.high {
+                    background: #fff5f5;
+                    border-left-color: #e53e3e;
+                }
+                .violation-detail-item.medium {
+                    background: #fffaf0;
+                    border-left-color: #dd6b20;
+                }
+                .violation-header {
+                    font-size: 16px;
+                    font-weight: bold;
+                    margin-bottom: 8px;
+                    color: #2d3748;
+                }
+                .violation-content {
+                    font-size: 14px;
+                }
+                .violation-rule {
+                    color: #c53030;
+                    font-weight: 600;
+                    margin-bottom: 4px;
+                }
+                .violation-count {
+                    color: #e53e3e;
+                    font-size: 12px;
+                    font-weight: bold;
+                }
+                .violation-details {
+                    color: #718096;
+                    font-size: 12px;
+                    margin-top: 4px;
+                }
+                </style>
+            `;
+            
             violationsContent.innerHTML = htmlContent;
+            console.log('>>> 違反表示HTML生成完了');
         }
 
         // タブ切り替え
@@ -986,10 +1617,10 @@
             
             // プレースホルダーメッセージを表示
             const noDataMessage = document.getElementById('no-data-message');
-            const shiftTable = document.getElementById('shift-table-data');
-            if (noDataMessage && shiftTable) {
+            const shiftGrid = document.getElementById('shift-grid-container');
+            if (noDataMessage && shiftGrid) {
                 noDataMessage.style.display = 'block';
-                shiftTable.style.display = 'none';
+                shiftGrid.style.display = 'none';
             }
         }
 

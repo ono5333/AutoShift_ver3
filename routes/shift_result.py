@@ -100,26 +100,50 @@ def generate_and_display_shift(month):
 @shift_result_bp.route('/api/shift/display/table/<month>', methods=['GET'])
 def get_shift_table_data(month):
     """
-    シフト表データ取得API
+    シフト表データ取得API（表示専用、生成は行わない）
     
     Args:
         month: 対象月 (YYYY-MM形式)
         
     Returns:
-        JSON: シフト表データ
+        JSON: 保存済みシフト表データまたはデータなしメッセージ
     """
     try:
+        # 月の形式確認
+        try:
+            datetime.strptime(month, '%Y-%m')
+        except ValueError:
+            return jsonify({
+                'status': 'error',
+                'message': '月の形式が正しくありません (YYYY-MM形式で指定してください)'
+            }), 400
+        
         # 保存済み結果確認
         results_dir = Path(__file__).parent.parent / "results"
         result_file = results_dir / f"shift_result_{month.replace('-', '_')}.json"
         
         if result_file.exists():
-            # 保存済みデータがあっても新規生成を実行
-            # データの整合性を保つため
-            return generate_and_display_shift(month)
+            # 保存済みデータを読み込み
+            with open(result_file, 'r', encoding='utf-8') as f:
+                saved_data = json.load(f)
+                
+            # 表示マネージャー初期化
+            display = ShiftDisplayManager()
+            
+            # 必要に応じてデータ形式を変換
+            response_data = {
+                'status': 'success',
+                'message': f'{month}の保存済みシフトデータを読み込みました',
+                'data': saved_data
+            }
+            
+            return jsonify(response_data), 200
         else:
-            # 新規生成
-            return generate_and_display_shift(month)
+            # 保存済みデータが存在しない場合
+            return jsonify({
+                'status': 'no_data',
+                'message': f'{month}のシフトデータがありません。生成ボタンを押してシフトを作成してください。'
+            }), 200
             
     except Exception as e:
         return jsonify({
