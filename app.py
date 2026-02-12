@@ -14,6 +14,9 @@ import config
 
 app = Flask(__name__)
 
+# 日本語対応: JSONレスポンスで日本語を正しく表示
+app.json.ensure_ascii = False
+
 # ====================
 # エンドポイント
 # ====================
