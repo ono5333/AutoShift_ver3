@@ -18,6 +18,19 @@ from models import ShiftType
 
 request_holidays_bp = Blueprint('request_holidays', __name__)
 
+
+def _get_shift_generation_ordered_staff():
+    """シフト生成と同じ並び順でスタッフを返す（看護師も表示）。"""
+    staff_list = load_project_staff()
+    class_priority = {
+        '介護士': 0,
+        '初級介護士': 1,
+        'お風呂': 2,
+        '看護師': 3,
+    }
+    staff_list.sort(key=lambda s: (class_priority.get(s.staff_class, 999), s.id))
+    return staff_list
+
 # ====================
 
 # API エンドポイント
@@ -38,7 +51,7 @@ def get_staff_list():
         }
     """
     try:
-        staff_list = load_project_staff()
+        staff_list = _get_shift_generation_ordered_staff()
         
         # スタッフ情報をJSON形式に変換
         staff_data = []
@@ -100,7 +113,7 @@ def get_request_holidays(month):
         request_data = load_project_request_holidays(month)
         
         # スタッフ一覧も取得（名前表示用）
-        staff_list = load_project_staff()
+        staff_list = _get_shift_generation_ordered_staff()
         staff_dict = {staff.id: staff.name for staff in staff_list}
         
         # レスポンス形式に変換
@@ -169,7 +182,7 @@ def add_request_holiday(month):
         reason = data.get('reason', '')
         
         # スタッフID検証
-        staff_list = load_project_staff()
+        staff_list = _get_shift_generation_ordered_staff()
         if staff_id not in [staff.id for staff in staff_list]:
             return jsonify({
                 'status': 'error',
@@ -191,12 +204,23 @@ def add_request_holiday(month):
                 'message': '日付の形式が正しくありません (YYYY-MM-DD形式で指定してください)'
             }), 400
         
-        # タイプ検証
-        valid_types = ['希', '有']
+        # タイプ検証（看護師のみ 日/夜/明/休 を許可）
+        target_staff = next((staff for staff in staff_list if staff.id == staff_id), None)
+        if not target_staff:
+            return jsonify({
+                'status': 'error',
+                'message': f'無効なスタッフIDです: {staff_id}'
+            }), 400
+
+        if target_staff.staff_class == '看護師':
+            valid_types = ['日', '夜', '明', '休', '希', '有']
+        else:
+            valid_types = ['希', '有']
+
         if request_type not in valid_types:
             return jsonify({
                 'status': 'error',
-                'message': f'無効な休暇タイプです。有効な値: {", ".join(valid_types)}'
+                'message': f'無効な設定タイプです。有効な値: {", ".join(valid_types)}'
             }), 400
         
         # 既存データ読み込み
@@ -274,7 +298,7 @@ def delete_request_holiday(month, staff_id, date):
         
         # データ読み込み
         request_data = load_project_request_holidays(month)
-        staff_list = load_project_staff()
+        staff_list = _get_shift_generation_ordered_staff()
         
         # 希望休削除
         deleted = False
@@ -352,7 +376,7 @@ def bulk_add_request_holidays(month):
         
         # 既存データ読み込み
         request_data = load_project_request_holidays(month)
-        staff_list = load_project_staff()
+        staff_list = _get_shift_generation_ordered_staff()
         staff_ids = [staff.id for staff in staff_list]
         
         # バリデーション
@@ -461,7 +485,7 @@ def get_calendar_data(month):
         request_data = load_project_request_holidays(month)
         
         # スタッフ一覧読み込み
-        staff_list = load_project_staff()
+        staff_list = _get_shift_generation_ordered_staff()
         
         # カレンダーデータ生成
         calendar_data = {

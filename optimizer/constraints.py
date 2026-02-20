@@ -9,7 +9,7 @@ AutoShift - OR-Tools制約マネージャー
 """
 
 from ortools.sat.python import cp_model
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from typing import List, Dict, Any, Optional
 import calendar
 
@@ -56,6 +56,9 @@ class ConstraintManager:
         
         # 違反追跡（penalty_var, staff_id, date, constraint_name, description）
         self.constraint_violations = []
+
+        # 祝日計算キャッシュ
+        self._holiday_cache: Dict[int, set] = {}
         
         print(f"🔗 制約マネージャー初期化完了")
         
@@ -85,8 +88,8 @@ class ConstraintManager:
             # FR013: 連続勤務の上限 (ランクA)
             self._add_fr013_max_consecutive_days()
             
-            # FR005: 2月の公休 (ランクA)
-            self._add_fr005_february_holidays()
+            # FR004-FR007: 月別公休 (ランクA)
+            self._add_fr004_to_fr007_monthly_holidays()
             
             # FR015: 勤務日数の計算 (ランクB)
             self._add_fr015_work_days_calculation()
@@ -101,7 +104,7 @@ class ConstraintManager:
             # TODO: FR014,FR016を修正後に再有効化
             # - FR014: お風呂担当の配置 (ランクB) - 型不整合修正が必要
             # - FR016: 介護士の勤務日数平均化 (ランクC) - 型不整合修正が必要
-            # - FR004,006-007: その他月別公休日数制約
+            # - FR005: 2月限定実装（FR004-FR007統合版に置換済み）
             
             print(f"   ✅ 施設ルール制約 11個 追加完了（安定版）")
             
@@ -154,7 +157,13 @@ class ConstraintManager:
         if not month_holiday_days:
             return
             
+        current_month = self.dates[0].month if self.dates else None
+
         for staff in self.staff_list:
+            # FR006(3-11月)は「お風呂」クラスを適用外とする
+            if current_month is not None and 3 <= current_month <= 11 and staff.staff_class == "お風呂":
+                continue
+
             # 各日について公休フラグを作成
             public_holiday_flags = []
             request_holiday_flags = []
@@ -177,32 +186,46 @@ class ConstraintManager:
             self.model.Add(sum(all_holiday_flags) == month_holiday_days)
                 
     def _get_monthly_holiday_days(self) -> Optional[int]:
-        """現在の月に対応する公休日数を取得"""
+        """現在の月に対応する公休日数をfacility_rules定義から取得"""
+        if not self.dates:
+            return None
+
         current_month = self.dates[0].month
-        
-        # FR004-FR007の定義
-        holiday_rules = {
-            1: 12,  # 1月
-            2: 8,   # 2月
-            12: 11  # 12月
-        }
-        
-        # 3-11月は9日
-        if 3 <= current_month <= 11:
-            return 9
-        else:
-            return holiday_rules.get(current_month)
+        for rule in self.rules.get('facility_rules', []):
+            if 'days' not in rule:
+                continue
+            month_value = rule.get('month')
+            if isinstance(month_value, int) and month_value == current_month:
+                return rule.get('days')
+            if isinstance(month_value, list) and current_month in month_value:
+                return rule.get('days')
+        return None
             
     def _add_fr008_request_holiday_limit(self) -> None:
         """FR008: 希望休申請上限 (月3日以内) (ランクA)"""
+        facility_rules = self.rules.get('facility_rules', [])
+        max_requests = 3
+        exempt_classes = set()
+
+        for rule in facility_rules:
+            if rule.get('id') == 'FR008' and 'max_requests' in rule:
+                max_requests = rule.get('max_requests', 3)
+            if rule.get('constraint_type') == 'request_limit_exempt_class':
+                staff_class = rule.get('staff_class')
+                if staff_class:
+                    exempt_classes.add(staff_class)
+
         for staff in self.staff_list:
+            if staff.staff_class in exempt_classes:
+                continue
+
             request_holiday_bool_vars = []
             for target_date in self.dates:
                 bool_var = self.model.NewBoolVar(f"req_hol_{staff.id}_{target_date.day}")
                 self.model.Add(self.shift[(staff.id, target_date)] == ShiftType.REQUEST_HOLIDAY.value).OnlyEnforceIf(bool_var)
                 self.model.Add(self.shift[(staff.id, target_date)] != ShiftType.REQUEST_HOLIDAY.value).OnlyEnforceIf(bool_var.Not())
                 request_holiday_bool_vars.append(bool_var)
-            self.model.Add(sum(request_holiday_bool_vars) <= 3)
+            self.model.Add(sum(request_holiday_bool_vars) <= max_requests)
             
     def _add_fr011_caregiver_in_day_shift(self) -> None:
         """FR011: 日勤に介護士配置 (ランクA)"""
@@ -383,8 +406,11 @@ class ConstraintManager:
             
     def _add_fr015_work_days_calculation(self) -> None:
         """FR015: 勤務日数の計算 - 月の日数 - 公休数の日数分勤務を割り当てる (ランクB)"""
-        total_days = len(self.dates)  # 2026年2月は28日
-        expected_work_days = total_days - 8  # FR005で公休数は8日
+        total_days = len(self.dates)
+        month_holiday_days = self._get_monthly_holiday_days()
+        if month_holiday_days is None:
+            return
+        expected_work_days = total_days - month_holiday_days
         
         for staff in self.staff_list:
             work_flags = []
@@ -544,6 +570,12 @@ class ConstraintManager:
                     weekdays = ['日', '月', '火', '水', '木', '金', '土']
                     day_name = weekdays[day_of_week] if 0 <= day_of_week <= 6 else '不明'
                     print(f"      - {rule_id}: {staff_name} {day_name}曜日固定休")
+
+                elif constraint_type == 'fixed_public_holiday_off':
+                    # 恒久休み: 勤務系シフトは不可、休暇系シフトのみ許可
+                    self._add_fixed_public_holiday_off_constraint(staff_id)
+                    implemented_count += 1
+                    print(f"      - {rule_id}: {staff_name} 祝日休み固定")
                 
                 # 複雑な制約は一時的にスキップ
                 # TODO: 段階的に追加
@@ -572,6 +604,95 @@ class ConstraintManager:
                     ]
                     self.model.AddAllowedAssignments([self.shift[(staff_id, target_date)]], 
                                                    [[shift] for shift in rest_shifts])
+
+    def _add_fixed_public_holiday_off_constraint(self, staff_id: int) -> None:
+        """祝日のみ休暇系シフトに限定（非祝日は制約しない）"""
+        rest_shifts = [
+            ShiftType.PUBLIC_HOLIDAY.value,
+            ShiftType.REQUEST_HOLIDAY.value,
+            ShiftType.PAID_HOLIDAY.value
+        ]
+        for target_date in self.dates:
+            if not self._is_japanese_public_holiday(target_date):
+                continue
+            if (staff_id, target_date) in self.shift:
+                self.model.AddAllowedAssignments(
+                    [self.shift[(staff_id, target_date)]],
+                    [[shift] for shift in rest_shifts]
+                )
+
+    def _is_japanese_public_holiday(self, target_date: date) -> bool:
+        """対象日が日本の祝日かを返す（振替休日・国民の休日を含む）"""
+        year_holidays = self._holiday_cache.get(target_date.year)
+        if year_holidays is None:
+            year_holidays = self._build_japanese_holiday_set(target_date.year)
+            self._holiday_cache[target_date.year] = year_holidays
+        return target_date in year_holidays
+
+    def _build_japanese_holiday_set(self, year: int) -> set:
+        holidays = set()
+
+        # 固定祝日
+        holidays.add(date(year, 1, 1))    # 元日
+        holidays.add(date(year, 2, 11))   # 建国記念の日
+        holidays.add(date(year, 2, 23))   # 天皇誕生日
+        holidays.add(date(year, 4, 29))   # 昭和の日
+        holidays.add(date(year, 5, 3))    # 憲法記念日
+        holidays.add(date(year, 5, 4))    # みどりの日
+        holidays.add(date(year, 5, 5))    # こどもの日
+        holidays.add(date(year, 8, 11))   # 山の日
+        holidays.add(date(year, 11, 3))   # 文化の日
+        holidays.add(date(year, 11, 23))  # 勤労感謝の日
+
+        # ハッピーマンデー
+        holidays.add(self._nth_weekday_of_month(year, 1, 0, 2))   # 成人の日: 1月第2月曜
+        holidays.add(self._nth_weekday_of_month(year, 7, 0, 3))   # 海の日: 7月第3月曜
+        holidays.add(self._nth_weekday_of_month(year, 9, 0, 3))   # 敬老の日: 9月第3月曜
+        holidays.add(self._nth_weekday_of_month(year, 10, 0, 2))  # スポーツの日: 10月第2月曜
+
+        # 春分・秋分
+        holidays.add(date(year, 3, self._vernal_equinox_day(year)))
+        holidays.add(date(year, 9, self._autumn_equinox_day(year)))
+
+        # 振替休日
+        extra_substitute = set()
+        for h in sorted(holidays):
+            if h.weekday() == 6:  # 日曜
+                substitute = h + timedelta(days=1)
+                while substitute in holidays:
+                    substitute += timedelta(days=1)
+                extra_substitute.add(substitute)
+        holidays |= extra_substitute
+
+        # 国民の休日（祝日に挟まれた平日）
+        start = date(year, 1, 2)
+        end = date(year, 12, 30)
+        d = start
+        extra_citizen = set()
+        while d <= end:
+            if d not in holidays and (d - timedelta(days=1)) in holidays and (d + timedelta(days=1)) in holidays:
+                extra_citizen.add(d)
+            d += timedelta(days=1)
+        holidays |= extra_citizen
+
+        return holidays
+
+    @staticmethod
+    def _nth_weekday_of_month(year: int, month: int, weekday: int, n: int) -> date:
+        """month内の第n weekday(0=月曜)の日付を返す"""
+        first = date(year, month, 1)
+        offset = (weekday - first.weekday()) % 7
+        return first + timedelta(days=offset + (n - 1) * 7)
+
+    @staticmethod
+    def _vernal_equinox_day(year: int) -> int:
+        """1980-2099年向け近似式"""
+        return int(20.8431 + 0.242194 * (year - 1980) - int((year - 1980) / 4))
+
+    @staticmethod
+    def _autumn_equinox_day(year: int) -> int:
+        """1980-2099年向け近似式"""
+        return int(23.2488 + 0.242194 * (year - 1980) - int((year - 1980) / 4))
                                                    
     def _add_max_night_shifts_constraint(self, staff_id: int, max_count: int) -> None:
         """夜勤回数上限制約"""
@@ -636,6 +757,8 @@ class ConstraintManager:
                 staff_id1, staff_id2 = staff_ids[0], staff_ids[1]
                 
                 if constraint_type == 'cannot_work_together' and shift_type == '夜':
+                    if staff_id1 not in self.staff_by_id or staff_id2 not in self.staff_by_id:
+                        continue
                     # RR001: 同日夜勤不可制約を実装
                     self._add_cannot_work_together_night(staff_id1, staff_id2)
                     implemented_count += 1
@@ -673,6 +796,7 @@ class ConstraintManager:
             staff_requests = self.request_holidays.get('staff_requests', [])
             request_count = 0
             applied_requests = []
+            paid_request_dates_by_staff: Dict[int, set] = {}
             
             for staff_req in staff_requests:
                 staff_id = staff_req.get('staff_id')
@@ -701,6 +825,19 @@ class ConstraintManager:
                         elif request_type == '有':
                             # 有給（ランクA制約 - 絶対遵守）
                             self.model.Add(self.shift[(staff_id, request_date)] == ShiftType.PAID_HOLIDAY.value)
+                            paid_request_dates_by_staff.setdefault(staff_id, set()).add(request_date)
+                        elif request_type == '日':
+                            # 日勤指定（ランクA制約 - 絶対遵守）
+                            self.model.Add(self.shift[(staff_id, request_date)] == ShiftType.DAY.value)
+                        elif request_type == '夜':
+                            # 夜勤指定（ランクA制約 - 絶対遵守）
+                            self.model.Add(self.shift[(staff_id, request_date)] == ShiftType.NIGHT.value)
+                        elif request_type == '明':
+                            # 夜勤明け指定（ランクA制約 - 絶対遵守）
+                            self.model.Add(self.shift[(staff_id, request_date)] == ShiftType.NIGHT_SHIFT_OFF.value)
+                        elif request_type == '休':
+                            # 公休指定（ランクA制約 - 絶対遵守）
+                            self.model.Add(self.shift[(staff_id, request_date)] == ShiftType.PUBLIC_HOLIDAY.value)
                         else:
                             print(f"      ⚠️ 不明な希望休タイプ: {request_type}")
                             continue
@@ -709,6 +846,13 @@ class ConstraintManager:
                         applied_requests.append(f"{staff_name} {request_date.strftime('%m/%d')} [{request_type}]")
                     else:
                         print(f"      ⚠️ 対象外日付: {staff_name} - {request_date}")
+
+            # 有給は申請された日付以外には割り当てない
+            for staff in self.staff_list:
+                requested_paid_dates = paid_request_dates_by_staff.get(staff.id, set())
+                for target_date in self.dates:
+                    if target_date not in requested_paid_dates:
+                        self.model.Add(self.shift[(staff.id, target_date)] != ShiftType.PAID_HOLIDAY.value)
                         
             print(f"   ✅ 希望休み制約 {request_count}件 追加完了:")
             for req in applied_requests:

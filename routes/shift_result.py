@@ -52,6 +52,22 @@ def generate_and_display_shift(month):
         print(f"🚀 {month} のシフト最適化を開始...")
         optimizer = ShiftOptimizer(month)
         result = optimizer.optimize()
+
+        # 実行可能解がない場合は、表示データを作らずエラー返却
+        if result.solver_status in ('INFEASIBLE', 'UNKNOWN'):
+            return jsonify({
+                'status': 'error',
+                'message': (
+                    f'{month}はシフトを作成できませんでした '
+                    f'(solver_status={result.solver_status})。'
+                    'ルールまたは希望休を見直してください。'
+                ),
+                'data': {
+                    'month': month,
+                    'solver_status': result.solver_status,
+                    'solver_time': round(result.solver_time, 4)
+                }
+            }), 422
         
         # 表示マネージャー初期化
         display = ShiftDisplayManager()

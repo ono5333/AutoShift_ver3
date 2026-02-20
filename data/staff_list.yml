@@ -44,3 +44,9 @@ staff:
 - id: 15
   name: 大上迫
   class: お風呂
+- id: 16
+  name: 山田那須子
+  class: 看護師
+- id: 17
+  name: 山田賀
+  class: 介護士

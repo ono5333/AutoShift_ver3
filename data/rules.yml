@@ -96,6 +96,13 @@ facility_rules:
   max_consecutive_days: 2
   rank: B
   title: 連休制限と2連休促進
+- constraint_type: request_limit_exempt_class
+  description: 「お風呂」クラスはパート扱いのため希望休上限の対象外とする
+  id: FR019
+  rank: A
+  staff_class: お風呂
+  target_rule_id: FR008
+  title: 希望休上限の職種除外
 personal_rules:
 - constraint_type: no_night_shift
   description: 夜勤に入ることはできない
@@ -178,6 +185,61 @@ personal_rules:
   staff_id: 15
   staff_name: 大上迫
   title: 夜勤不可
+- constraint_type: fixed_day_off
+  day_of_week: 0
+  description: 日曜日は必ず休みとする
+  id: PR012
+  rank: A
+  staff_id: 14
+  staff_name: 大野正恵
+  title: 日曜日は固定休
+- constraint_type: fixed_day_off
+  day_of_week: 6
+  description: 土曜日は必ず休みとする
+  id: PR013
+  rank: A
+  staff_id: 14
+  staff_name: 大野正恵
+  title: 土曜日は固定休
+- constraint_type: fixed_day_off
+  day_of_week: 3
+  description: 水曜日は必ず休みとする
+  id: PR014
+  rank: A
+  staff_id: 14
+  staff_name: 大野正恵
+  title: 水曜日は固定休
+- constraint_type: fixed_day_off
+  day_of_week: 0
+  description: 日曜日は必ず休みとする
+  id: PR015
+  rank: A
+  staff_id: 15
+  staff_name: 大上迫
+  title: 日曜日は固定休
+- constraint_type: fixed_day_off
+  day_of_week: 6
+  description: 土曜日は必ず休みとする
+  id: PR016
+  rank: A
+  staff_id: 15
+  staff_name: 大上迫
+  title: 土曜日は固定休
+- constraint_type: fixed_day_off
+  day_of_week: 3
+  description: 水曜日は必ず休みとする
+  id: PR017
+  rank: A
+  staff_id: 15
+  staff_name: 大上迫
+  title: 水曜日は固定休
+- constraint_type: fixed_public_holiday_off
+  description: 勤務シフトに入らず、祝日休みとする
+  id: PR018
+  rank: A
+  staff_id: 14
+  staff_name: 大野正恵
+  title: 祝日休み固定
 relationship_rules:
 - constraint_type: cannot_work_together
   description: この2名は同日に夜勤に入ることはできない
@@ -189,5 +251,17 @@ relationship_rules:
   - 6
   staff_names:
   - 田中賢輝
+  - 斎藤明音
+  title: 同日夜勤不可
+- constraint_type: cannot_work_together
+  description: この2名は同日に夜勤に入ることはできない
+  id: RR002
+  rank: A
+  shift_type: 夜
+  staff_ids:
+  - 16
+  - 6
+  staff_names:
+  - 山田那須子
   - 斎藤明音
   title: 同日夜勤不可

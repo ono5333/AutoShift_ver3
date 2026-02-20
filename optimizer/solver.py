@@ -78,6 +78,8 @@ class ShiftOptimizer:
             
             # スタッフ・ルール・希望休み読み込み
             self.staff_list = load_project_staff()
+            self.staff_list = [s for s in self.staff_list if s.staff_class != "看護師"]
+            self._sort_staff_list_for_generation()
             self.rules = load_project_rules()
             self.request_holidays = load_project_request_holidays(self.month_year)
             
@@ -93,6 +95,17 @@ class ShiftOptimizer:
             
         except Exception as e:
             raise Exception(f"データ読み込みエラー: {e}")
+
+    def _sort_staff_list_for_generation(self) -> None:
+        """シフト生成時のスタッフ順を仕様に合わせて整列する。"""
+        class_priority = {
+            "介護士": 0,
+            "初級介護士": 1,
+            "お風呂": 2,
+            "看護師": 3,
+        }
+        # 未定義クラスは末尾へ。クラス内はID昇順。
+        self.staff_list.sort(key=lambda s: (class_priority.get(s.staff_class, 999), s.id))
             
     def _generate_dates(self) -> None:
         """対象月の日付リストを生成"""

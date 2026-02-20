@@ -48,6 +48,22 @@ def generate_shift():
         # 1. 最適化実行
         optimizer = ShiftOptimizer(month)
         result = optimizer.optimize()
+
+        # 実行可能解がない場合
+        if result.solver_status in ('INFEASIBLE', 'UNKNOWN'):
+            return jsonify({
+                'status': 'error',
+                'message': (
+                    f'{month}はシフトを作成できませんでした '
+                    f'(solver_status={result.solver_status})。'
+                    'ルールまたは希望休を見直してください。'
+                ),
+                'data': {
+                    'month': month,
+                    'solver_status': result.solver_status,
+                    'solver_time': round(result.solver_time, 4)
+                }
+            }), 422
         
         # 2. 結果を辞書形式に変換
         shift_dict = {}
@@ -138,6 +154,22 @@ def display_shift_table(month):
         # 最新結果を再生成（デモ用）
         optimizer = ShiftOptimizer(month)
         result = optimizer.optimize()
+
+        # 実行可能解がない場合
+        if result.solver_status in ('INFEASIBLE', 'UNKNOWN'):
+            return jsonify({
+                'status': 'error',
+                'message': (
+                    f'{month}はシフトを作成できませんでした '
+                    f'(solver_status={result.solver_status})。'
+                    'ルールまたは希望休を見直してください。'
+                ),
+                'data': {
+                    'month': month,
+                    'solver_status': result.solver_status,
+                    'solver_time': round(result.solver_time, 4)
+                }
+            }), 422
         
         # 表示マネージャー作成
         display = ShiftDisplayManager() 

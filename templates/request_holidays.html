@@ -149,6 +149,13 @@
             color: #1976d2 !important; 
             font-weight: bold;
         } /* 土曜日 */
+        .day-header.saturday-col {
+            background: #e6f4ff;
+        }
+        .day-header.sunday-col,
+        .day-header.holiday-col {
+            background: #ffecec;
+        }
         .staff-row {
             display: contents;
         }
@@ -187,6 +194,13 @@
         .calendar-cell.has-paid {
             background: #d1ecf1;
         }
+        .calendar-cell.saturday-col {
+            background: #e6f4ff;
+        }
+        .calendar-cell.sunday-col,
+        .calendar-cell.holiday-col {
+            background: #ffecec;
+        }
         .holiday-marker {
             width: 30px;
             height: 30px;
@@ -203,6 +217,18 @@
         }
         .holiday-marker.paid {
             background: #17a2b8;
+        }
+        .holiday-marker.day {
+            background: #2f80ed;
+        }
+        .holiday-marker.night {
+            background: #34495e;
+        }
+        .holiday-marker.nightoff {
+            background: #9b59b6;
+        }
+        .holiday-marker.public {
+            background: #27ae60;
         }
         .legend {
             display: flex;
@@ -483,12 +509,53 @@
     </div>
 
     <script>
-        let currentMonth = '2026-02';
+        let currentMonth = '';
         let staffList = [];
         let calendarData = null;
 
+        function getDefaultStartMonth() {
+            const today = new Date();
+            let year = today.getFullYear();
+            let month = today.getMonth() + 2; // 当月+1
+
+            if (month > 12) {
+                month = 1;
+                year += 1;
+            }
+
+            return `${year}-${String(month).padStart(2, '0')}`;
+        }
+
+        function ensureMonthOption(monthValue) {
+            const monthSelect = document.getElementById('month-select');
+            const exists = Array.from(monthSelect.options).some(opt => opt.value === monthValue);
+            if (exists) {
+                return;
+            }
+
+            const [year, month] = monthValue.split('-');
+            const option = document.createElement('option');
+            option.value = monthValue;
+            option.textContent = `${Number(year)}年${Number(month)}月`;
+            monthSelect.appendChild(option);
+        }
+
         // ページ読み込み時の初期化
         document.addEventListener('DOMContentLoaded', function() {
+            const monthSelect = document.getElementById('month-select');
+            const defaultMonth = getDefaultStartMonth();
+            const urlMonth = new URLSearchParams(window.location.search).get('month');
+
+            ensureMonthOption(defaultMonth);
+
+            if (urlMonth) {
+                ensureMonthOption(urlMonth);
+                monthSelect.value = urlMonth;
+            } else {
+                monthSelect.value = defaultMonth;
+            }
+
+            currentMonth = monthSelect.value;
             loadStaffList();
             loadCalendar();
             setupMonthSelector();
@@ -558,6 +625,70 @@
                 return dayNames[date.getDay()];
             }
 
+            function nthWeekdayOfMonth(year, month, weekday, n) {
+                const first = new Date(year, month - 1, 1);
+                const offset = (weekday - first.getDay() + 7) % 7;
+                return 1 + offset + (n - 1) * 7;
+            }
+
+            function vernalEquinoxDay(year) {
+                return Math.floor(20.8431 + 0.242194 * (year - 1980) - Math.floor((year - 1980) / 4));
+            }
+
+            function autumnEquinoxDay(year) {
+                return Math.floor(23.2488 + 0.242194 * (year - 1980) - Math.floor((year - 1980) / 4));
+            }
+
+            function buildJapaneseHolidays(year) {
+                const set = new Set();
+                const add = (m, d) => set.add(`${year}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`);
+
+                add(1, 1);
+                add(2, 11);
+                add(2, 23);
+                add(4, 29);
+                add(5, 3);
+                add(5, 4);
+                add(5, 5);
+                add(8, 11);
+                add(11, 3);
+                add(11, 23);
+
+                add(1, nthWeekdayOfMonth(year, 1, 1, 2));   // 成人の日
+                add(7, nthWeekdayOfMonth(year, 7, 1, 3));   // 海の日
+                add(9, nthWeekdayOfMonth(year, 9, 1, 3));   // 敬老の日
+                add(10, nthWeekdayOfMonth(year, 10, 1, 2)); // スポーツの日
+
+                add(3, vernalEquinoxDay(year));
+                add(9, autumnEquinoxDay(year));
+
+                return set;
+            }
+
+            function isJapaneseHoliday(year, month, day) {
+                const key = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+                const base = buildJapaneseHolidays(year);
+                if (base.has(key)) return true;
+
+                // 振替休日（祝日が日曜なら次の非祝日平日）
+                const d = new Date(year, month - 1, day);
+                if (d.getDay() === 1) { // 月曜
+                    const prev = new Date(d);
+                    prev.setDate(d.getDate() - 1);
+                    const prevKey = `${prev.getFullYear()}-${String(prev.getMonth() + 1).padStart(2, '0')}-${String(prev.getDate()).padStart(2, '0')}`;
+                    if (prev.getDay() === 0 && base.has(prevKey)) return true;
+                }
+
+                // 国民の休日（祝日に挟まれた平日）
+                const prev = new Date(d);
+                prev.setDate(d.getDate() - 1);
+                const next = new Date(d);
+                next.setDate(d.getDate() + 1);
+                const prevKey = `${prev.getFullYear()}-${String(prev.getMonth() + 1).padStart(2, '0')}-${String(prev.getDate()).padStart(2, '0')}`;
+                const nextKey = `${next.getFullYear()}-${String(next.getMonth() + 1).padStart(2, '0')}-${String(next.getDate()).padStart(2, '0')}`;
+                return d.getDay() !== 0 && base.has(prevKey) && base.has(nextKey);
+            }
+
             // 日付ヘッダー（日付と曜日を表示）
             for (let day = 1; day <= calendarData.days_in_month; day++) {
                 const dayHeader = document.createElement('div');
@@ -567,8 +698,21 @@
                 const dayOfWeek = getDayOfWeek(currentYear, currentMonth, day);
                 
                 let dayClass = '';
-                if (dayOfWeek === '日') dayClass = ' sunday';
-                else if (dayOfWeek === '土') dayClass = ' saturday';
+                let dayTypeClass = '';
+                const isHoliday = isJapaneseHoliday(currentYear, currentMonth, day);
+                if (dayOfWeek === '日') {
+                    dayClass = ' sunday';
+                    dayTypeClass = 'sunday-col';
+                } else if (dayOfWeek === '土') {
+                    dayClass = ' saturday';
+                    dayTypeClass = 'saturday-col';
+                } else if (isHoliday) {
+                    dayTypeClass = 'holiday-col';
+                }
+
+                if (dayTypeClass) {
+                    dayHeader.classList.add(dayTypeClass);
+                }
                 
                 dayHeader.innerHTML = `<div>${day}</div><div class="day-of-week${dayClass}">${dayOfWeek}</div>`;
                 calendarGrid.appendChild(dayHeader);
@@ -592,17 +736,51 @@
                     cell.dataset.staffId = staff.id;
                     cell.dataset.day = day;
                     cell.onclick = () => toggleCellState(staff.id, day, cell);
+                    const monthSelectValue = document.getElementById('month-select').value;
+                    const [currentYear, currentMonth] = monthSelectValue.split('-').map(Number);
+                    const dayOfWeek = getDayOfWeek(currentYear, currentMonth, day);
+                    const isHoliday = isJapaneseHoliday(currentYear, currentMonth, day);
+                    if (dayOfWeek === '日') {
+                        cell.classList.add('sunday-col');
+                        cell.dataset.dayTypeClass = 'sunday-col';
+                    } else if (dayOfWeek === '土') {
+                        cell.classList.add('saturday-col');
+                        cell.dataset.dayTypeClass = 'saturday-col';
+                    } else if (isHoliday) {
+                        cell.classList.add('holiday-col');
+                        cell.dataset.dayTypeClass = 'holiday-col';
+                    }
                     
                     // 希望休チェック
                     const staffHolidays = calendarData.holidays[staff.id];
                     if (staffHolidays && staffHolidays[day]) {
                         const holiday = staffHolidays[day];
                         const marker = document.createElement('div');
-                        marker.className = `holiday-marker ${holiday.type === '希' ? 'request' : 'paid'}`;
-                        marker.textContent = holiday.type === '希' ? '希' : '有';
-                        marker.title = holiday.reason || (holiday.type === '希' ? '希望休' : '有給');
+                        const markerClass = {
+                            '希': 'request',
+                            '有': 'paid',
+                            '日': 'day',
+                            '夜': 'night',
+                            '明': 'nightoff',
+                            '休': 'public'
+                        }[holiday.type] || 'request';
+                        const markerTitle = {
+                            '希': '希望休',
+                            '有': '有給',
+                            '日': '日勤指定',
+                            '夜': '夜勤指定',
+                            '明': '夜勤明け指定',
+                            '休': '公休指定'
+                        }[holiday.type] || holiday.type;
+                        marker.className = `holiday-marker ${markerClass}`;
+                        marker.textContent = holiday.type;
+                        marker.title = holiday.reason || markerTitle;
                         cell.appendChild(marker);
-                        cell.classList.add(holiday.type === '希' ? 'has-request' : 'has-paid');
+                        if (holiday.type === '希') {
+                            cell.classList.add('has-request');
+                        } else if (holiday.type === '有') {
+                            cell.classList.add('has-paid');
+                        }
                     }
                     
                     calendarGrid.appendChild(cell);
@@ -662,26 +840,25 @@
                 // 現在の状態を取得
                 const currentHoliday = calendarData.holidays[staffId] && calendarData.holidays[staffId][day];
                 const currentType = currentHoliday ? currentHoliday.type : null;
+                const staff = calendarData.staff.find(s => s.id === staffId);
+                const isNurse = staff && staff.staff_class === '看護師';
                 
                 const [year, month] = currentMonth.split('-');
                 const dateStr = `${year}-${month}-${day.toString().padStart(2, '0')}`;
                 
-                let nextType;
-                
-                // 状態遷移: 空白 → 希 → 有 → 空白
-                if (!currentType) {
-                    // 空白 → 希
-                    nextType = '希';
-                    await addHolidayRequest(staffId, dateStr, nextType);
-                } else if (currentType === '希') {
-                    // 希 → 有
-                    nextType = '有';
+                // 状態遷移:
+                // 通常: 空白 → 希 → 有 → 空白
+                // 看護師: 空白 → 日 → 夜 → 明 → 休 → 希 → 有 → 空白
+                const cycle = isNurse ? [null, '日', '夜', '明', '休', '希', '有'] : [null, '希', '有'];
+                const currentIndex = cycle.indexOf(currentType);
+                const safeIndex = currentIndex >= 0 ? currentIndex : 0;
+                const nextType = cycle[(safeIndex + 1) % cycle.length];
+
+                if (currentType) {
                     await deleteHolidayRequest(staffId, dateStr);
+                }
+                if (nextType) {
                     await addHolidayRequest(staffId, dateStr, nextType);
-                } else if (currentType === '有') {
-                    // 有 → 空白
-                    await deleteHolidayRequest(staffId, dateStr);
-                    nextType = null;
                 }
                 
                 // UIを更新
@@ -729,6 +906,10 @@
             // セルをクリア
             cell.innerHTML = '';
             cell.className = 'calendar-cell';
+            const dayTypeClass = cell.dataset.dayTypeClass;
+            if (dayTypeClass) {
+                cell.classList.add(dayTypeClass);
+            }
             
             // calendarDataを更新
             if (!calendarData.holidays[staffId]) {
@@ -744,11 +925,31 @@
                 
                 // マーカーを追加
                 const marker = document.createElement('div');
-                marker.className = `holiday-marker ${type === '希' ? 'request' : 'paid'}`;
-                marker.textContent = type === '希' ? '希' : '有';
-                marker.title = type === '希' ? '希望休' : '有給';
+                const markerClass = {
+                    '希': 'request',
+                    '有': 'paid',
+                    '日': 'day',
+                    '夜': 'night',
+                    '明': 'nightoff',
+                    '休': 'public'
+                }[type] || 'request';
+                const markerTitle = {
+                    '希': '希望休',
+                    '有': '有給',
+                    '日': '日勤指定',
+                    '夜': '夜勤指定',
+                    '明': '夜勤明け指定',
+                    '休': '公休指定'
+                }[type] || type;
+                marker.className = `holiday-marker ${markerClass}`;
+                marker.textContent = type;
+                marker.title = markerTitle;
                 cell.appendChild(marker);
-                cell.classList.add(type === '希' ? 'has-request' : 'has-paid');
+                if (type === '希') {
+                    cell.classList.add('has-request');
+                } else if (type === '有') {
+                    cell.classList.add('has-paid');
+                }
             } else {
                 // 空白状態に設定
                 delete calendarData.holidays[staffId][day];

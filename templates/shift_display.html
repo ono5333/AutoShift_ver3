@@ -221,6 +221,13 @@
             color: #1976d2 !important;
             font-weight: bold;
         }
+        .day-header.saturday-col {
+            background: #e6f4ff;
+        }
+        .day-header.sunday-col,
+        .day-header.holiday-col {
+            background: #ffecec;
+        }
         .staff-name-cell {
             background: #f8f9fa;
             font-weight: 500;
@@ -257,6 +264,13 @@
         }
         .shift-cell.paid {
             background: #ffe7f0;
+        }
+        .shift-cell.saturday-col {
+            background: #e6f4ff !important;
+        }
+        .shift-cell.sunday-col,
+        .shift-cell.holiday-col {
+            background: #ffecec !important;
         }
         /* 集計セルのスタイル - 通常セルと同じサイズに統一 */
         .staff-summary {
@@ -601,11 +615,52 @@
     </div>
 
     <script>
-        let currentMonth = '2026-02';
+        let currentMonth = '';
         let shiftData = null;
+
+        function getDefaultStartMonth() {
+            const today = new Date();
+            let year = today.getFullYear();
+            let month = today.getMonth() + 2; // 当月+1
+
+            if (month > 12) {
+                month = 1;
+                year += 1;
+            }
+
+            return `${year}-${String(month).padStart(2, '0')}`;
+        }
+
+        function ensureMonthOption(monthValue) {
+            const monthSelect = document.getElementById('month-select');
+            const exists = Array.from(monthSelect.options).some(opt => opt.value === monthValue);
+            if (exists) {
+                return;
+            }
+
+            const [year, month] = monthValue.split('-');
+            const option = document.createElement('option');
+            option.value = monthValue;
+            option.textContent = `${Number(year)}年${Number(month)}月`;
+            monthSelect.appendChild(option);
+        }
 
         // ページ読み込み時の初期化
         document.addEventListener('DOMContentLoaded', function() {
+            const monthSelect = document.getElementById('month-select');
+            const defaultMonth = getDefaultStartMonth();
+            const urlMonth = new URLSearchParams(window.location.search).get('month');
+
+            ensureMonthOption(defaultMonth);
+
+            if (urlMonth) {
+                ensureMonthOption(urlMonth);
+                monthSelect.value = urlMonth;
+            } else {
+                monthSelect.value = defaultMonth;
+            }
+
+            currentMonth = monthSelect.value;
             setupMonthSelector();
             loadInitialShiftData();
         });
@@ -821,6 +876,54 @@
                     return dayNames[date.getDay()];
                 }
 
+                function nthWeekdayOfMonth(year, month, weekday, n) {
+                    const first = new Date(year, month - 1, 1);
+                    const offset = (weekday - first.getDay() + 7) % 7;
+                    return 1 + offset + (n - 1) * 7;
+                }
+
+                function vernalEquinoxDay(year) {
+                    return Math.floor(20.8431 + 0.242194 * (year - 1980) - Math.floor((year - 1980) / 4));
+                }
+
+                function autumnEquinoxDay(year) {
+                    return Math.floor(23.2488 + 0.242194 * (year - 1980) - Math.floor((year - 1980) / 4));
+                }
+
+                function buildJapaneseHolidays(year) {
+                    const set = new Set();
+                    const add = (m, d) => set.add(`${year}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`);
+                    add(1, 1); add(2, 11); add(2, 23); add(4, 29); add(5, 3); add(5, 4); add(5, 5);
+                    add(8, 11); add(11, 3); add(11, 23);
+                    add(1, nthWeekdayOfMonth(year, 1, 1, 2));
+                    add(7, nthWeekdayOfMonth(year, 7, 1, 3));
+                    add(9, nthWeekdayOfMonth(year, 9, 1, 3));
+                    add(10, nthWeekdayOfMonth(year, 10, 1, 2));
+                    add(3, vernalEquinoxDay(year));
+                    add(9, autumnEquinoxDay(year));
+                    return set;
+                }
+
+                function isJapaneseHoliday(year, month, day) {
+                    const key = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+                    const base = buildJapaneseHolidays(year);
+                    if (base.has(key)) return true;
+                    const d = new Date(year, month - 1, day);
+                    if (d.getDay() === 1) {
+                        const prev = new Date(d);
+                        prev.setDate(d.getDate() - 1);
+                        const prevKey = `${prev.getFullYear()}-${String(prev.getMonth() + 1).padStart(2, '0')}-${String(prev.getDate()).padStart(2, '0')}`;
+                        if (prev.getDay() === 0 && base.has(prevKey)) return true;
+                    }
+                    const prev = new Date(d);
+                    prev.setDate(d.getDate() - 1);
+                    const next = new Date(d);
+                    next.setDate(d.getDate() + 1);
+                    const prevKey = `${prev.getFullYear()}-${String(prev.getMonth() + 1).padStart(2, '0')}-${String(prev.getDate()).padStart(2, '0')}`;
+                    const nextKey = `${next.getFullYear()}-${String(next.getMonth() + 1).padStart(2, '0')}-${String(next.getDate()).padStart(2, '0')}`;
+                    return d.getDay() !== 0 && base.has(prevKey) && base.has(nextKey);
+                }
+
                 // Grid要素をクリア
                 console.log('🧹 Grid要素クリア...');
                 gridContainer.innerHTML = '';
@@ -855,8 +958,20 @@
                         dayHeader.className = 'shift-grid-item day-header';
                         const dayOfWeek = getDayOfWeek(currentYear, currentMonth, day);
                         let dayClass = '';
-                        if (dayOfWeek === '日') dayClass = ' sunday';
-                        else if (dayOfWeek === '土') dayClass = ' saturday';
+                        let dayTypeClass = '';
+                        const isHoliday = isJapaneseHoliday(currentYear, currentMonth, day);
+                        if (dayOfWeek === '日') {
+                            dayClass = ' sunday';
+                            dayTypeClass = 'sunday-col';
+                        } else if (dayOfWeek === '土') {
+                            dayClass = ' saturday';
+                            dayTypeClass = 'saturday-col';
+                        } else if (isHoliday) {
+                            dayTypeClass = 'holiday-col';
+                        }
+                        if (dayTypeClass) {
+                            dayHeader.classList.add(dayTypeClass);
+                        }
                         
                         // より安全な DOM構築
                         const dayDiv = document.createElement('div');
@@ -901,11 +1016,18 @@
                         for (let day = 1; day <= daysInMonth; day++) {
                             const cellData = row.days && row.days[day] ? row.days[day] : '';
                             const shiftCell = document.createElement('div');
-                            shiftCell.className = `shift-grid-item shift-cell ${getCellClass(cellData)}`;
+                            const dayOfWeek = getDayOfWeek(currentYear, currentMonth, day);
+                            let dayTypeClass = '';
+                            const isHoliday = isJapaneseHoliday(currentYear, currentMonth, day);
+                            if (dayOfWeek === '日') dayTypeClass = 'sunday-col';
+                            else if (dayOfWeek === '土') dayTypeClass = 'saturday-col';
+                            else if (isHoliday) dayTypeClass = 'holiday-col';
+                            shiftCell.className = `shift-grid-item shift-cell ${getCellClass(cellData)} ${dayTypeClass}`.trim();
                             shiftCell.textContent = cellData || '';
                             shiftCell.dataset.staffIndex = rowIndex;
                             shiftCell.dataset.day = day;
                             shiftCell.dataset.staffName = row.staff_name;
+                            shiftCell.dataset.dayTypeClass = dayTypeClass;
                             // クリックイベント追加
                             shiftCell.style.cursor = 'pointer';
                             shiftCell.addEventListener('click', function(event) {
@@ -1018,7 +1140,8 @@
             
             // UI更新
             cell.textContent = newValue;
-            cell.className = `shift-grid-item shift-cell ${getCellClass(newValue)}`;
+            const dayTypeClass = cell.dataset.dayTypeClass || '';
+            cell.className = `shift-grid-item shift-cell ${getCellClass(newValue)} ${dayTypeClass}`.trim();
             
             // データ更新
             if (shiftData && shiftData.shift_table && shiftData.shift_table.rows && 
