@@ -415,6 +415,7 @@ class ShiftDisplayManager:
         """
         stats_data = []
         total_stats = {shift_type.name: 0 for shift_type in ShiftType}
+        staff_stats_for_ui = []
         
         for staff in staff_list:
             staff_stats = {
@@ -437,8 +438,34 @@ class ShiftDisplayManager:
             staff_stats['work_ratio'] = round(staff_stats['work_days'] / len(dates) * 100, 1)
             
             stats_data.append(staff_stats)
+            staff_stats_for_ui.append({
+                'staff_name': staff.name,
+                'staff_class': staff.staff_class,
+                'day_shifts': staff_stats['shifts']['DAY'],
+                'night_shifts': staff_stats['shifts']['NIGHT'],
+                'night_off_shifts': staff_stats['shifts']['NIGHT_SHIFT_OFF'],
+                'holidays': staff_stats['shifts']['PUBLIC_HOLIDAY'],
+                'request_holidays': staff_stats['shifts']['REQUEST_HOLIDAY'],
+                'paid_holidays': staff_stats['shifts']['PAID_HOLIDAY'],
+                'work_days': staff_stats['work_days'],
+                'total_days': staff_stats['total_days'],
+                'work_ratio': staff_stats['work_ratio']
+            })
+
+        overall_for_ui = {
+            'total_day': total_stats['DAY'],
+            'total_night': total_stats['NIGHT'],
+            'total_night_off': total_stats['NIGHT_SHIFT_OFF'],
+            'total_holiday': total_stats['PUBLIC_HOLIDAY'],
+            'total_request': total_stats['REQUEST_HOLIDAY'],
+            'total_paid': total_stats['PAID_HOLIDAY']
+        }
         
         return {
+            # 新UI/既存テンプレート互換キー
+            'staff_stats': staff_stats_for_ui,
+            'overall': overall_for_ui,
+            # 既存キー（後方互換）
             'staff_statistics': stats_data,
             'total_statistics': total_stats,
             'summary': {

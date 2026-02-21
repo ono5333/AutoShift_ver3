@@ -238,6 +238,12 @@
             min-width: 120px;
             z-index: 5;
         }
+        .staff-name-cell.junior-caregiver {
+            background: #fff9db;
+        }
+        .staff-name-cell.bath-staff {
+            background: #eaf7ea;
+        }
         .shift-cell {
             position: relative;
             cursor: pointer;
@@ -375,6 +381,36 @@
         }
         .shift-cell.paid {
             background: #c6f6d5;
+        }
+        .holiday-marker {
+            width: 30px;
+            height: 30px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 12px;
+            font-weight: bold;
+            color: white;
+            pointer-events: none;
+        }
+        .holiday-marker.request {
+            background: #ffc107;
+        }
+        .holiday-marker.paid {
+            background: #17a2b8;
+        }
+        .holiday-marker.day {
+            background: #2f80ed;
+        }
+        .holiday-marker.night {
+            background: #34495e;
+        }
+        .holiday-marker.nightoff {
+            background: #9b59b6;
+        }
+        .holiday-marker.public {
+            background: #e74c3c;
         }
         .violation-indicator {
             position: absolute;
@@ -1009,6 +1045,11 @@
                         // スタッフ名セル
                         const staffNameCell = document.createElement('div');
                         staffNameCell.className = 'shift-grid-item staff-name-cell';
+                        if (row.staff_class === '初級介護士') {
+                            staffNameCell.classList.add('junior-caregiver');
+                        } else if (row.staff_class === 'お風呂') {
+                            staffNameCell.classList.add('bath-staff');
+                        }
                         staffNameCell.textContent = row.staff_name;
                         gridContainer.appendChild(staffNameCell);
                         
@@ -1022,8 +1063,8 @@
                             if (dayOfWeek === '日') dayTypeClass = 'sunday-col';
                             else if (dayOfWeek === '土') dayTypeClass = 'saturday-col';
                             else if (isHoliday) dayTypeClass = 'holiday-col';
-                            shiftCell.className = `shift-grid-item shift-cell ${getCellClass(cellData)} ${dayTypeClass}`.trim();
-                            shiftCell.textContent = cellData || '';
+                            shiftCell.className = `shift-grid-item shift-cell ${dayTypeClass}`.trim();
+                            renderShiftCellMarker(shiftCell, cellData || '');
                             shiftCell.dataset.staffIndex = rowIndex;
                             shiftCell.dataset.day = day;
                             shiftCell.dataset.staffName = row.staff_name;
@@ -1119,11 +1160,12 @@
 
         // シフトセルクリックハンドラ（Phase 2: インタラクティブ機能） 
         function handleShiftCellClick(event) {
-            const cell = event.target;
+            const cell = event.target.closest('.shift-cell');
+            if (!cell) return;
             const staffIndex = parseInt(cell.dataset.staffIndex);
             const day = parseInt(cell.dataset.day);
             const staffName = cell.dataset.staffName;
-            const currentValue = cell.textContent.trim();
+            const currentValue = getShiftCellValue(cell);
             
             // シフト選択肢（空白なし、循環ローテーション）
             const shiftOptions = ['日', '夜', '明', '休', '希', '有'];
@@ -1139,9 +1181,9 @@
             const newValue = shiftOptions[currentIndex];
             
             // UI更新
-            cell.textContent = newValue;
+            renderShiftCellMarker(cell, newValue);
             const dayTypeClass = cell.dataset.dayTypeClass || '';
-            cell.className = `shift-grid-item shift-cell ${getCellClass(newValue)} ${dayTypeClass}`.trim();
+            cell.className = `shift-grid-item shift-cell ${dayTypeClass}`.trim();
             
             // データ更新
             if (shiftData && shiftData.shift_table && shiftData.shift_table.rows && 
@@ -1361,6 +1403,41 @@
                 case '有': return 'paid';
                 default: return '';
             }
+        }
+
+        function getShiftCellValue(cell) {
+            const marker = cell.querySelector('.holiday-marker');
+            if (marker) {
+                return marker.textContent.trim();
+            }
+            return cell.textContent.trim();
+        }
+
+        function renderShiftCellMarker(cell, value) {
+            cell.innerHTML = '';
+            if (!value) {
+                return;
+            }
+
+            const markerClass = {
+                '希': 'request',
+                '有': 'paid',
+                '日': 'day',
+                '夜': 'night',
+                '明': 'nightoff',
+                '休': 'public',
+                '公': 'public'
+            }[value] || '';
+
+            if (!markerClass) {
+                cell.textContent = value;
+                return;
+            }
+
+            const marker = document.createElement('div');
+            marker.className = `holiday-marker ${markerClass}`;
+            marker.textContent = value === '公' ? '休' : value;
+            cell.appendChild(marker);
         }
         
         // 日毎集計計算（動的日数対応）

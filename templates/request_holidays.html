@@ -169,6 +169,12 @@
             justify-content: center;
             text-align: center;
         }
+        .staff-name.junior-caregiver {
+            background: #fff9db;
+        }
+        .staff-name.bath-staff {
+            background: #eaf7ea;
+        }
         .staff-class {
             font-size: 12px;
             color: #666;
@@ -187,12 +193,6 @@
         }
         .calendar-cell:hover {
             background: #f8f9fa;
-        }
-        .calendar-cell.has-request {
-            background: #fff3cd;
-        }
-        .calendar-cell.has-paid {
-            background: #d1ecf1;
         }
         .calendar-cell.saturday-col {
             background: #e6f4ff;
@@ -228,7 +228,7 @@
             background: #9b59b6;
         }
         .holiday-marker.public {
-            background: #27ae60;
+            background: #e74c3c;
         }
         .legend {
             display: flex;
@@ -723,6 +723,11 @@
                 // スタッフ名
                 const staffName = document.createElement('div');
                 staffName.className = 'staff-name';
+                if (staff.staff_class === '初級介護士') {
+                    staffName.classList.add('junior-caregiver');
+                } else if (staff.staff_class === 'お風呂') {
+                    staffName.classList.add('bath-staff');
+                }
                 staffName.innerHTML = `
                     <div>${staff.name}</div>
                     <div class="staff-class">${staff.staff_class}</div>
@@ -776,11 +781,6 @@
                         marker.textContent = holiday.type;
                         marker.title = holiday.reason || markerTitle;
                         cell.appendChild(marker);
-                        if (holiday.type === '希') {
-                            cell.classList.add('has-request');
-                        } else if (holiday.type === '有') {
-                            cell.classList.add('has-paid');
-                        }
                     }
                     
                     calendarGrid.appendChild(cell);
@@ -945,11 +945,6 @@
                 marker.textContent = type;
                 marker.title = markerTitle;
                 cell.appendChild(marker);
-                if (type === '希') {
-                    cell.classList.add('has-request');
-                } else if (type === '有') {
-                    cell.classList.add('has-paid');
-                }
             } else {
                 // 空白状態に設定
                 delete calendarData.holidays[staffId][day];

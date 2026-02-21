@@ -133,11 +133,12 @@ staff_requests:
   staff_id: 15
   staff_name: 大上迫
 - requests:
-  - date: '2026-03-13'
-    type: 希
   - date: '2026-03-28'
     type: 希
   - date: '2026-03-29'
+    type: 希
+  - date: '2026-03-13'
+    reason: ''
     type: 希
   staff_id: 17
   staff_name: 山田賀
@@ -178,9 +179,6 @@ staff_requests:
   - date: '2026-03-12'
     reason: ''
     type: 夜
-  - date: '2026-03-13'
-    reason: ''
-    type: 明
   - date: '2026-03-14'
     reason: ''
     type: 休
@@ -235,5 +233,14 @@ staff_requests:
   - date: '2026-03-31'
     reason: ''
     type: 日
+  - date: '2026-03-13'
+    reason: ''
+    type: 日
   staff_id: 16
   staff_name: 山田那須子
+- requests:
+  - date: '2026-03-13'
+    reason: ''
+    type: 希
+  staff_id: 4
+  staff_name: 近藤由香利

@@ -103,6 +103,21 @@ facility_rules:
   staff_class: お風呂
   target_rule_id: FR008
   title: 希望休上限の職種除外
+- constraint_type: day_shift_balance_optimization
+  description: 日勤人数の日ごとのばらつき（最大値-最小値）を最小化する
+  id: FR020
+  rank: C
+  target_classes:
+  - 介護士
+  - 初級介護士
+  weight: 10
+  title: 日勤人数の平準化
+- constraint_type: night_shift_balance_optimization
+  description: 夜勤可能スタッフ間の夜勤回数のばらつき（最大値-最小値）を最小化する
+  id: FR021
+  rank: C
+  weight: 10
+  title: 夜勤回数の平準化
 personal_rules:
 - constraint_type: no_night_shift
   description: 夜勤に入ることはできない
@@ -240,6 +255,14 @@ personal_rules:
   staff_id: 14
   staff_name: 大野正恵
   title: 祝日休み固定
+- constraint_type: max_consecutive_day_shifts
+  description: 日勤は連続2日までとする
+  id: PR019
+  max_count: 2
+  rank: B
+  staff_id: 17
+  staff_name: 山田賀
+  title: 日勤連続上限
 relationship_rules:
 - constraint_type: cannot_work_together
   description: この2名は同日に夜勤に入ることはできない
