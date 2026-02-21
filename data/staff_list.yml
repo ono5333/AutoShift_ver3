@@ -17,9 +17,9 @@ staff:
 - id: 6
   name: 斎藤明音
   class: 介護士
-- id: 7
-  name: 是枝久枝
-  class: 介護士
+# - id: 7
+#   name: 是枝久枝
+#   class: 介護士
 - id: 8
   name: 木村洋二
   class: 介護士

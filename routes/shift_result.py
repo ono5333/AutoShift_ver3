@@ -224,6 +224,7 @@ def export_shift_data(month, format):
             # Excel生成 (pandas使用)
             try:
                 import pandas as pd
+                import openpyxl  # noqa: F401
                 
                 shift_table = display.generate_shift_table_data(result, optimizer.staff_list, optimizer.dates)
                 
@@ -249,10 +250,10 @@ def export_shift_data(month, format):
                     download_name=f'shift_{month}.xlsx'
                 )
                 
-            except ImportError:
+            except ImportError as e:
                 return jsonify({
                     'status': 'error',
-                    'message': 'Excelエクスポートにはopenpyxlが必要です'
+                    'message': f'Excelエクスポートに必要なライブラリが不足しています: {e}'
                 }), 500
         
         else:

@@ -1905,7 +1905,8 @@
                 const url = window.URL.createObjectURL(blob);
                 const link = document.createElement('a');
                 link.href = url;
-                link.download = `shift_${currentMonth}.${format}`;
+                const extension = format === 'excel' ? 'xlsx' : format;
+                link.download = `shift_${currentMonth}.${extension}`;
                 document.body.appendChild(link);
                 link.click();
                 document.body.removeChild(link);

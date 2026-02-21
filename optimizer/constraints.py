@@ -69,6 +69,9 @@ class ConstraintManager:
         try:
             # FR001: 夜勤は毎日2名配置 (ランクA)  
             self._add_fr001_night_shift_daily_2_staff()
+
+            # FR023: スタッフ夜勤回数の月上限 (ランクA)
+            self._add_fr023_global_max_night_shifts()
             
             # FR002: 日勤は毎日3名以上配置 (ランクA)
             self._add_fr002_day_shift_daily_3_staff()
@@ -84,6 +87,9 @@ class ConstraintManager:
             
             # FR012: 夜勤明けは必須 (ランクA)
             self._add_fr012_night_shift_off_required()
+
+            # FR022: 夜→明 サイクル連続上限 (ランクA)
+            self._add_fr022_max_consecutive_night_off_cycles()
             
             # FR013: 連続勤務の上限 (ランクA)
             self._add_fr013_max_consecutive_days()
@@ -138,6 +144,32 @@ class ConstraintManager:
                 self.model.Add(self.shift[(staff.id, target_date)] != ShiftType.DAY.value).OnlyEnforceIf(bool_var.Not())
                 day_shift_bool_vars.append(bool_var)
             self.model.Add(sum(day_shift_bool_vars) >= 3)
+
+    def _add_fr023_global_max_night_shifts(self) -> None:
+        """FR023: 全スタッフの夜勤回数を月上限以内にする (ランクA)"""
+        facility_rules = self.rules.get('facility_rules', [])
+        rule = next(
+            (r for r in facility_rules
+             if r.get('constraint_type') == 'global_max_night_shifts' or r.get('id') == 'FR023'),
+            None
+        )
+        if rule is None:
+            return
+
+        max_count = int(rule.get('max_count', 7))
+        if max_count < 0:
+            return
+
+        print(f"      - FR023: 夜勤回数は月{max_count}回まで")
+
+        for staff in self.staff_list:
+            night_shift_bool_vars = []
+            for target_date in self.dates:
+                bool_var = self.model.NewBoolVar(f"fr023_night_{staff.id}_{target_date.day}")
+                self.model.Add(self.shift[(staff.id, target_date)] == ShiftType.NIGHT.value).OnlyEnforceIf(bool_var)
+                self.model.Add(self.shift[(staff.id, target_date)] != ShiftType.NIGHT.value).OnlyEnforceIf(bool_var.Not())
+                night_shift_bool_vars.append(bool_var)
+            self.model.Add(sum(night_shift_bool_vars) <= max_count)
             
     def _add_fr003_bath_staff_mon_thu(self) -> None:
         """FR003: 月木のお風呂配置 (ランクA)"""
@@ -348,6 +380,54 @@ class ConstraintManager:
                 
                 # 7日連続勤務を禁止（最大6日まで）
                 self.model.Add(sum(work_flags) <= 6)
+
+    def _add_fr022_max_consecutive_night_off_cycles(self) -> None:
+        """FR022: 夜→明 サイクルの連続回数上限 (ランクA)"""
+        facility_rules = self.rules.get('facility_rules', [])
+        rule = next(
+            (r for r in facility_rules
+             if r.get('constraint_type') == 'max_consecutive_night_off_cycles' or r.get('id') == 'FR022'),
+            None
+        )
+        if rule is None:
+            return
+
+        max_cycles = int(rule.get('max_cycles', 2))
+        if max_cycles < 1:
+            return
+
+        print(f"      - FR022: 夜→明 サイクル連続上限{max_cycles}回")
+
+        # 上限を超える(max_cycles + 1)サイクルの連続パターンを禁止する
+        pattern_len = 2 * (max_cycles + 1)
+        if len(self.dates) < pattern_len:
+            return
+
+        for staff in self.staff_list:
+            for i in range(len(self.dates) - pattern_len + 1):
+                expected_flags = []
+                for j in range(pattern_len):
+                    target_date = self.dates[i + j]
+                    expect_night = (j % 2 == 0)
+                    flag = self.model.NewBoolVar(f"fr022_match_{staff.id}_{target_date.day}_{i}_{j}")
+                    if expect_night:
+                        self.model.Add(
+                            self.shift[(staff.id, target_date)] == ShiftType.NIGHT.value
+                        ).OnlyEnforceIf(flag)
+                        self.model.Add(
+                            self.shift[(staff.id, target_date)] != ShiftType.NIGHT.value
+                        ).OnlyEnforceIf(flag.Not())
+                    else:
+                        self.model.Add(
+                            self.shift[(staff.id, target_date)] == ShiftType.NIGHT_SHIFT_OFF.value
+                        ).OnlyEnforceIf(flag)
+                        self.model.Add(
+                            self.shift[(staff.id, target_date)] != ShiftType.NIGHT_SHIFT_OFF.value
+                        ).OnlyEnforceIf(flag.Not())
+                    expected_flags.append(flag)
+
+                # すべて一致（= 上限超過パターン）は禁止
+                self.model.AddBoolOr([f.Not() for f in expected_flags])
                 
     def _add_fr005_february_holidays(self) -> None:
         """FR005: 2月の公休数は8日 - 公休+希望休=8日（有給は別枠）(ランクA)"""

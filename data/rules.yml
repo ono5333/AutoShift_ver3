@@ -118,6 +118,18 @@ facility_rules:
   rank: C
   weight: 10
   title: 夜勤回数の平準化
+- constraint_type: max_consecutive_night_off_cycles
+  description: 夜[夜]→夜勤明け[明]の連続サイクルは2回までとする
+  id: FR022
+  max_cycles: 2
+  rank: A
+  title: 夜→明サイクル連続上限
+- constraint_type: global_max_night_shifts
+  description: スタッフの夜勤回数は月7回を上限とする
+  id: FR023
+  max_count: 7
+  rank: A
+  title: 夜勤回数の月間上限
 personal_rules:
 - constraint_type: no_night_shift
   description: 夜勤に入ることはできない
@@ -159,7 +171,7 @@ personal_rules:
   description: 夜勤回数は月5回まで
   id: PR006
   max_count: 5
-  rank: A
+  rank: B
   staff_id: 4
   staff_name: 近藤由香利
   title: 夜勤回数上限
@@ -167,7 +179,7 @@ personal_rules:
   description: 夜勤回数は月6回まで
   id: PR007
   max_count: 6
-  rank: A
+  rank: B
   staff_id: 9
   staff_name: ソー
   title: 夜勤回数上限
@@ -175,7 +187,7 @@ personal_rules:
   description: 夜勤回数は月6回まで
   id: PR008
   max_count: 6
-  rank: A
+  rank: B
   staff_id: 10
   staff_name: 田中賢輝
   title: 夜勤回数上限
@@ -262,6 +274,14 @@ personal_rules:
   rank: B
   staff_id: 17
   staff_name: 山田賀
+  title: 日勤連続上限
+- constraint_type: max_consecutive_day_shifts
+  description: 日勤は連続3日までとする
+  id: PR020
+  max_count: 3
+  rank: B
+  staff_id: 11
+  staff_name: 本庄正昇
   title: 日勤連続上限
 relationship_rules:
 - constraint_type: cannot_work_together
