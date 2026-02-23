@@ -21,11 +21,11 @@ sys.path.append(str(Path(__file__).parent.parent))
 
 try:
     from models import ShiftType, Staff, ShiftResult
-    from utils import load_project_staff, load_project_rules, load_project_request_holidays
+    from utils import load_project_staff, load_project_rules, load_project_request_holidays, load_project_carryover_for_month
 except ImportError:
     # 相対インポート予備
     from ..models import ShiftType, Staff, ShiftResult
-    from ..utils import load_project_staff, load_project_rules, load_project_request_holidays
+    from ..utils import load_project_staff, load_project_rules, load_project_request_holidays, load_project_carryover_for_month
 
 from .constraints import ConstraintManager
 
@@ -40,7 +40,7 @@ class ShiftOptimizer:
     - 違反情報の詳細レポート
     """
     
-    def __init__(self, month_year: str = "2026-02"):
+    def __init__(self, month_year: str = "2026-02", carryover_override: Optional[Dict[str, Any]] = None):
         """
         初期化
         
@@ -49,6 +49,7 @@ class ShiftOptimizer:
         """
         self.month_year = month_year
         self.year, self.month = map(int, month_year.split('-'))
+        self.carryover_override = carryover_override
         
         # OR-Tools初期化
         self.model = cp_model.CpModel()
@@ -61,6 +62,7 @@ class ShiftOptimizer:
         self.staff_list = []
         self.rules = {}
         self.request_holidays = {}
+        self.carryover = {}
         self.dates = []
         
         # 制約マネージャー
@@ -82,6 +84,10 @@ class ShiftOptimizer:
             self._sort_staff_list_for_generation()
             self.rules = load_project_rules()
             self.request_holidays = load_project_request_holidays(self.month_year)
+            if isinstance(self.carryover_override, dict):
+                self.carryover = self.carryover_override
+            else:
+                self.carryover = load_project_carryover_for_month(self.month_year)
             
             # 対象月の日付リスト作成
             self._generate_dates()
@@ -127,7 +133,7 @@ class ShiftOptimizer:
             # 2. 制約マネージャー初期化
             self.constraint_manager = ConstraintManager(
                 self.model, self.shift, self.staff_list, 
-                self.rules, self.request_holidays, self.dates
+                self.rules, self.request_holidays, self.dates, self.carryover
             )
             
             # 3. 制約追加
@@ -265,7 +271,7 @@ class ShiftOptimizer:
             
     def _extract_solution(self) -> ShiftResult:
         """最適化結果の抽出"""
-        print("📋 結果抽出中...")
+        print("[INFO] 結果抽出中...")
         
         # シフト結果抽出
         shifts = {}

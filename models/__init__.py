@@ -43,6 +43,7 @@ class Staff:
     id: int
     name: str
     staff_class: str  # "介護士" / "初級介護士" / "お風呂"
+    employment_type: str = "正社員"  # "正社員" / "パート"
     
     def is_caregiver(self) -> bool:
         return self.staff_class == "介護士"

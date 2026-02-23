@@ -2,51 +2,67 @@ staff:
 - id: 1
   name: 山田志保里
   class: 介護士
+  employment_type: 正社員
 - id: 2
   name: 佐藤美幸
   class: 介護士
+  employment_type: 正社員
 - id: 3
   name: 田中茂子
   class: 介護士
+  employment_type: 正社員
 - id: 4
   name: 近藤由香利
   class: 介護士
+  employment_type: 正社員
 - id: 5
   name: 福島瑞穂
   class: 介護士
+  employment_type: 正社員
 - id: 6
   name: 斎藤明音
   class: 介護士
+  employment_type: 正社員
 # - id: 7
 #   name: 是枝久枝
 #   class: 介護士
 - id: 8
   name: 木村洋二
   class: 介護士
+  employment_type: 正社員
 - id: 9
   name: ソー
   class: 初級介護士
+  employment_type: 正社員
 - id: 10
   name: 田中賢輝
   class: 介護士
+  employment_type: 正社員
 - id: 11
   name: 本庄正昇
   class: 初級介護士
+  employment_type: パート
 - id: 12
   name: タンダ
   class: 初級介護士
+  employment_type: 正社員
 - id: 13
   name: メイガー
   class: 初級介護士
+  employment_type: 正社員
 - id: 14
   name: 大野正恵
   class: お風呂
+  employment_type: パート
 - id: 15
   name: 大上迫
   class: お風呂
+  employment_type: パート
 - id: 16
   name: 山田那須子
   class: 看護師
+  employment_type: パート
 - id: 17
   name: 山田賀
   class: 介護士
+  employment_type: 正社員

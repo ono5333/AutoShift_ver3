@@ -26,7 +26,7 @@ class ConstraintManager:
     """
     
     def __init__(self, model: cp_model.CpModel, shift: Dict, staff_list: List[Staff], 
-                 rules: Dict, request_holidays: Dict, dates: List[date]):
+                 rules: Dict, request_holidays: Dict, dates: List[date], carryover: Optional[Dict[str, Any]] = None):
         """
         初期化
         
@@ -44,6 +44,7 @@ class ConstraintManager:
         self.rules = rules
         self.request_holidays = request_holidays
         self.dates = dates
+        self.carryover = carryover or {}
         
         # スタッフID→Staffオブジェクトのマッピング
         self.staff_by_id = {staff.id: staff for staff in staff_list}
@@ -59,6 +60,7 @@ class ConstraintManager:
 
         # 祝日計算キャッシュ
         self._holiday_cache: Dict[int, set] = {}
+        self._rank_var_seq = 0
         
         print(f"🔗 制約マネージャー初期化完了")
         
@@ -67,6 +69,9 @@ class ConstraintManager:
         print("   📋 施設ルール制約追加中...")
         
         try:
+            # 前月末引継ぎ制約（最優先）
+            self._add_month_end_carryover_constraints()
+
             # FR001: 夜勤は毎日2名配置 (ランクA)  
             self._add_fr001_night_shift_daily_2_staff()
 
@@ -93,6 +98,9 @@ class ConstraintManager:
             
             # FR013: 連続勤務の上限 (ランクA)
             self._add_fr013_max_consecutive_days()
+
+            # FR026: 6連勤相当の禁止 (ランクB)
+            self._add_fr026_max_consecutive_equivalent_work_days()
             
             # FR004-FR007: 月別公休 (ランクA)
             self._add_fr004_to_fr007_monthly_holidays()
@@ -111,6 +119,12 @@ class ConstraintManager:
             
             # FR018: 連休制限&2連休促進 (ランクB)
             self._add_fr018_max_consecutive_holidays()
+
+            # FR024: 夜→明の後の日勤禁止 (ランクB)
+            self._add_fr024_no_day_after_night_off()
+
+            # FR025: 夜勤優先抑制（ランクB）
+            self._add_fr025_night_shift_priority_reduction()
             
             # 複雑な制約は一時的にスキップ（型不整合エラー修正まで）
             # TODO: FR014,FR016を修正後に再有効化
@@ -122,9 +136,51 @@ class ConstraintManager:
             
         except Exception as e:
             raise Exception(f"施設ルール制約追加エラー: {e}")
+
+    def _add_month_end_carryover_constraints(self) -> None:
+        """前月末引継ぎ:
+        - 前月末が夜勤のスタッフは当月1日を夜勤明けにする
+        - 前月末が夜勤明けのスタッフは当月1日の日勤を禁止
+        """
+        if not self.dates:
+            return
+
+        prev_month_last_shifts = self.carryover.get('prev_month_last_shifts', {})
+        parsed_prev_shifts: Dict[int, str] = {}
+        if isinstance(prev_month_last_shifts, dict):
+            for sid, shift_label in prev_month_last_shifts.items():
+                try:
+                    parsed_prev_shifts[int(sid)] = str(shift_label)
+                except (TypeError, ValueError):
+                    continue
+
+        night_staff_ids = self.carryover.get('night_staff_ids', [])
+        if isinstance(night_staff_ids, list):
+            for staff_id in night_staff_ids:
+                try:
+                    parsed_prev_shifts[int(staff_id)] = '夜'
+                except (TypeError, ValueError):
+                    continue
+
+        first_date = self.dates[0]
+        for staff in self.staff_list:
+            staff_id = staff.id
+            prev_shift = parsed_prev_shifts.get(staff_id)
+            if (staff_id, first_date) not in self.shift:
+                continue
+            if prev_shift == '夜':
+                self.model.Add(self.shift[(staff_id, first_date)] == ShiftType.NIGHT_SHIFT_OFF.value)
+            else:
+                # 月初1日の「明」は、前月末が「夜」のスタッフ以外は禁止
+                self.model.Add(self.shift[(staff_id, first_date)] != ShiftType.NIGHT_SHIFT_OFF.value)
+            if prev_shift == '明':
+                self.model.Add(self.shift[(staff_id, first_date)] != ShiftType.DAY.value)
     
     def _add_fr001_night_shift_daily_2_staff(self) -> None:
         """FR001: 夜勤は毎日2名配置 (ランクA)"""
+        rule = self._get_facility_rule("FR001")
+        rank = self._normalize_rank(rule.get('rank', 'A') if rule else 'A')
+        weight = self._get_rule_weight(rule, 1)
         for target_date in self.dates:
             night_shift_bool_vars = []
             for staff in self.staff_list:
@@ -132,10 +188,22 @@ class ConstraintManager:
                 self.model.Add(self.shift[(staff.id, target_date)] == ShiftType.NIGHT.value).OnlyEnforceIf(bool_var)
                 self.model.Add(self.shift[(staff.id, target_date)] != ShiftType.NIGHT.value).OnlyEnforceIf(bool_var.Not())
                 night_shift_bool_vars.append(bool_var)
-            self.model.Add(sum(night_shift_bool_vars) == 2)
+            total_night = sum(night_shift_bool_vars)
+            if rank == 'A':
+                self.model.Add(total_night == 2)
+            else:
+                over = self.model.NewIntVar(0, len(self.staff_list), f"fr001_over_{target_date.day}")
+                under = self.model.NewIntVar(0, len(self.staff_list), f"fr001_under_{target_date.day}")
+                self.model.Add(total_night - 2 <= over)
+                self.model.Add(2 - total_night <= under)
+                self._add_ranked_int_violation(over, rank, "FR001", "夜勤人数超過", None, target_date, weight)
+                self._add_ranked_int_violation(under, rank, "FR001", "夜勤人数不足", None, target_date, weight)
             
     def _add_fr002_day_shift_daily_3_staff(self) -> None:
         """FR002: 日勤は毎日3名以上配置 (ランクA)"""
+        rule = self._get_facility_rule("FR002")
+        rank = self._normalize_rank(rule.get('rank', 'A') if rule else 'A')
+        weight = self._get_rule_weight(rule, 1)
         for target_date in self.dates:
             day_shift_bool_vars = []
             for staff in self.staff_list:
@@ -143,20 +211,23 @@ class ConstraintManager:
                 self.model.Add(self.shift[(staff.id, target_date)] == ShiftType.DAY.value).OnlyEnforceIf(bool_var)
                 self.model.Add(self.shift[(staff.id, target_date)] != ShiftType.DAY.value).OnlyEnforceIf(bool_var.Not())
                 day_shift_bool_vars.append(bool_var)
-            self.model.Add(sum(day_shift_bool_vars) >= 3)
+            total_day = sum(day_shift_bool_vars)
+            if rank == 'A':
+                self.model.Add(total_day >= 3)
+            else:
+                shortage = self.model.NewIntVar(0, len(self.staff_list), f"fr002_short_{target_date.day}")
+                self.model.Add(3 - total_day <= shortage)
+                self._add_ranked_int_violation(shortage, rank, "FR002", "日勤人数不足", None, target_date, weight)
 
     def _add_fr023_global_max_night_shifts(self) -> None:
         """FR023: 全スタッフの夜勤回数を月上限以内にする (ランクA)"""
-        facility_rules = self.rules.get('facility_rules', [])
-        rule = next(
-            (r for r in facility_rules
-             if r.get('constraint_type') == 'global_max_night_shifts' or r.get('id') == 'FR023'),
-            None
-        )
+        rule = self._get_facility_rule("FR023", "global_max_night_shifts")
         if rule is None:
             return
 
         max_count = int(rule.get('max_count', 7))
+        rank = self._normalize_rank(rule.get('rank', 'A'))
+        weight = self._get_rule_weight(rule, 1)
         if max_count < 0:
             return
 
@@ -169,10 +240,21 @@ class ConstraintManager:
                 self.model.Add(self.shift[(staff.id, target_date)] == ShiftType.NIGHT.value).OnlyEnforceIf(bool_var)
                 self.model.Add(self.shift[(staff.id, target_date)] != ShiftType.NIGHT.value).OnlyEnforceIf(bool_var.Not())
                 night_shift_bool_vars.append(bool_var)
-            self.model.Add(sum(night_shift_bool_vars) <= max_count)
+            total_night = sum(night_shift_bool_vars)
+            if rank == 'A':
+                self.model.Add(total_night <= max_count)
+            else:
+                over = self.model.NewIntVar(0, len(self.dates), f"fr023_over_{staff.id}")
+                self.model.Add(total_night - max_count <= over)
+                self._add_ranked_int_violation(
+                    over, rank, "FR023", f"{staff.name} 夜勤回数上限超過", staff.id, None, weight
+                )
             
     def _add_fr003_bath_staff_mon_thu(self) -> None:
         """FR003: 月木のお風呂配置 (ランクA)"""
+        rule = self._get_facility_rule("FR003")
+        rank = self._normalize_rank(rule.get('rank', 'A') if rule else 'A')
+        weight = self._get_rule_weight(rule, 1)
         for target_date in self.dates:
             # 月曜日(0)・木曜日(3)のチェック
             if target_date.weekday() in [0, 3]:
@@ -185,22 +267,45 @@ class ConstraintManager:
                         self.model.Add(self.shift[(staff.id, target_date)] != ShiftType.DAY.value).OnlyEnforceIf(bool_var.Not())
                         bath_staff_bool_vars.append(bool_var)
                 if bath_staff_bool_vars:
-                    self.model.Add(sum(bath_staff_bool_vars) >= 1)
+                    total_bath = sum(bath_staff_bool_vars)
+                    if rank == 'A':
+                        self.model.Add(total_bath >= 1)
+                    else:
+                        shortage = self.model.NewIntVar(0, 1, f"fr003_short_{target_date.day}")
+                        self.model.Add(1 - total_bath <= shortage)
+                        self._add_ranked_int_violation(
+                            shortage, rank, "FR003", "お風呂担当不足", None, target_date, weight
+                        )
                 
     def _add_fr004_to_fr007_monthly_holidays(self) -> None:
         """FR004-FR007: 月別公休日数制約（簡易版）"""
-        # 月別公休日数取得
+        # 月別公休日数とrank取得
         month_holiday_days = self._get_monthly_holiday_days()
-        
-        if not month_holiday_days:
+        if month_holiday_days is None:
             return
-            
+        rank = 'A'
+        weight = 1
+        weight = 1
         current_month = self.dates[0].month if self.dates else None
-
-        for staff in self.staff_list:
-            # FR006(3-11月)は「お風呂」クラスを適用外とする
-            if current_month is not None and 3 <= current_month <= 11 and staff.staff_class == "お風呂":
+        for rule in self.rules.get('facility_rules', []):
+            if 'days' not in rule:
                 continue
+            month_value = rule.get('month')
+            matched = (
+                isinstance(month_value, int) and month_value == current_month
+            ) or (
+                isinstance(month_value, list) and current_month in month_value
+            )
+            if matched:
+                rank = self._normalize_rank(rule.get('rank', 'A'))
+                weight = self._get_rule_weight(rule, 1)
+                break
+        
+        for staff in self.staff_list:
+            # FR006(3-11月)は正社員のみに適用
+            if current_month is not None and 3 <= current_month <= 11:
+                if getattr(staff, "employment_type", "正社員") != "正社員":
+                    continue
 
             # 各日について公休フラグを作成
             public_holiday_flags = []
@@ -221,7 +326,20 @@ class ConstraintManager:
             
             # 公休+希望休の合計が指定日数
             all_holiday_flags = public_holiday_flags + request_holiday_flags
-            self.model.Add(sum(all_holiday_flags) == month_holiday_days)
+            total_holidays = sum(all_holiday_flags)
+            if rank == 'A':
+                self.model.Add(total_holidays == month_holiday_days)
+            else:
+                over = self.model.NewIntVar(0, len(self.dates), f"fr004_over_{staff.id}")
+                under = self.model.NewIntVar(0, len(self.dates), f"fr004_under_{staff.id}")
+                self.model.Add(total_holidays - month_holiday_days <= over)
+                self.model.Add(month_holiday_days - total_holidays <= under)
+                self._add_ranked_int_violation(
+                    over, rank, "FR004-7", f"{staff.name} 公休数超過", staff.id, None, weight
+                )
+                self._add_ranked_int_violation(
+                    under, rank, "FR004-7", f"{staff.name} 公休数不足", staff.id, None, weight
+                )
                 
     def _get_monthly_holiday_days(self) -> Optional[int]:
         """現在の月に対応する公休日数をfacility_rules定義から取得"""
@@ -244,10 +362,14 @@ class ConstraintManager:
         facility_rules = self.rules.get('facility_rules', [])
         max_requests = 3
         exempt_classes = set()
+        rank = 'A'
 
         for rule in facility_rules:
             if rule.get('id') == 'FR008' and 'max_requests' in rule:
                 max_requests = rule.get('max_requests', 3)
+            if rule.get('id') == 'FR008':
+                rank = self._normalize_rank(rule.get('rank', 'A'))
+                weight = self._get_rule_weight(rule, 1)
             if rule.get('constraint_type') == 'request_limit_exempt_class':
                 staff_class = rule.get('staff_class')
                 if staff_class:
@@ -263,10 +385,21 @@ class ConstraintManager:
                 self.model.Add(self.shift[(staff.id, target_date)] == ShiftType.REQUEST_HOLIDAY.value).OnlyEnforceIf(bool_var)
                 self.model.Add(self.shift[(staff.id, target_date)] != ShiftType.REQUEST_HOLIDAY.value).OnlyEnforceIf(bool_var.Not())
                 request_holiday_bool_vars.append(bool_var)
-            self.model.Add(sum(request_holiday_bool_vars) <= max_requests)
+            total_req = sum(request_holiday_bool_vars)
+            if rank == 'A':
+                self.model.Add(total_req <= max_requests)
+            else:
+                over = self.model.NewIntVar(0, len(self.dates), f"fr008_over_{staff.id}")
+                self.model.Add(total_req - max_requests <= over)
+                self._add_ranked_int_violation(
+                    over, rank, "FR008", f"{staff.name} 希望休上限超過", staff.id, None, weight
+                )
             
     def _add_fr011_caregiver_in_day_shift(self) -> None:
         """FR011: 日勤に介護士配置 (ランクA)"""
+        rule = self._get_facility_rule("FR011")
+        rank = self._normalize_rank(rule.get('rank', 'A') if rule else 'A')
+        weight = self._get_rule_weight(rule, 1)
         for target_date in self.dates:
             caregiver_day_bool_vars = []
             for staff in self.staff_list:
@@ -276,10 +409,21 @@ class ConstraintManager:
                     self.model.Add(self.shift[(staff.id, target_date)] != ShiftType.DAY.value).OnlyEnforceIf(bool_var.Not())
                     caregiver_day_bool_vars.append(bool_var)
             if caregiver_day_bool_vars:
-                self.model.Add(sum(caregiver_day_bool_vars) >= 1)
+                total = sum(caregiver_day_bool_vars)
+                if rank == 'A':
+                    self.model.Add(total >= 1)
+                else:
+                    shortage = self.model.NewIntVar(0, 1, f"fr011_short_{target_date.day}")
+                    self.model.Add(1 - total <= shortage)
+                    self._add_ranked_int_violation(
+                        shortage, rank, "FR011", "日勤介護士不足", None, target_date, weight
+                    )
             
     def _add_fr012_night_shift_off_required(self) -> None:
         """FR012: 夜勤明けは必須 (ランクA) - 希望休優先版"""
+        rule = self._get_facility_rule("FR012")
+        rank = self._normalize_rank(rule.get('rank', 'A') if rule else 'A')
+        weight = self._get_rule_weight(rule, 1)
         for staff in self.staff_list:
             for i, target_date in enumerate(self.dates[:-1]):  # 最終日は除外
                 next_date = self.dates[i + 1]
@@ -306,7 +450,17 @@ class ConstraintManager:
                 
                 # 翌日に希望休がある場合は今日夜勤を禁止
                 if has_request_holiday_tomorrow:
-                    self.model.Add(self.shift[(staff.id, target_date)] != ShiftType.NIGHT.value)
+                    if rank == 'A':
+                        self.model.Add(self.shift[(staff.id, target_date)] != ShiftType.NIGHT.value)
+                    else:
+                        is_night = self.model.NewBoolVar(f"fr012_req_prev_night_{staff.id}_{target_date.day}")
+                        self.model.Add(self.shift[(staff.id, target_date)] == ShiftType.NIGHT.value).OnlyEnforceIf(is_night)
+                        self.model.Add(self.shift[(staff.id, target_date)] != ShiftType.NIGHT.value).OnlyEnforceIf(is_night.Not())
+                        self._add_ranked_bool_violation(
+                            is_night, rank, "FR012",
+                            f"{staff.name} 希望休前日の夜勤違反",
+                            staff_id=staff.id, target_date=target_date, c_weight=weight
+                        )
                     continue
                 
                 # 通常のFR012制約: 夜勤→翌日夜勤明け
@@ -322,7 +476,17 @@ class ConstraintManager:
                 self.model.Add(self.shift[(staff.id, next_date)] != ShiftType.NIGHT_SHIFT_OFF.value).OnlyEnforceIf(night_off_tomorrow.Not())
                 
                 # 制約: 夜勤 → 翌日夜勤明け（希望休がない場合のみ）
-                self.model.AddImplication(night_today, night_off_tomorrow)
+                if rank == 'A':
+                    self.model.AddImplication(night_today, night_off_tomorrow)
+                else:
+                    viol = self.model.NewBoolVar(f"fr012_viol_no_off_{staff.id}_{target_date.day}")
+                    self.model.AddBoolAnd([night_today, night_off_tomorrow.Not()]).OnlyEnforceIf(viol)
+                    self.model.AddBoolOr([night_today.Not(), night_off_tomorrow]).OnlyEnforceIf(viol.Not())
+                    self._add_ranked_bool_violation(
+                        viol, rank, "FR012",
+                        f"{staff.name} 夜勤翌日明け違反",
+                        staff_id=staff.id, target_date=next_date, c_weight=weight
+                    )
                 
                 # 逆制約: 夜勤明け → 前日夜勤（夜勤明けは前日夜勤がある場合のみ）
                 # ただし、希望休制約が最優先
@@ -344,10 +508,23 @@ class ConstraintManager:
                 
                 # 翌日に希望休がない場合のみ、夜勤明けは前日夜勤を要求
                 if not yesterday_has_request:
-                    self.model.AddImplication(night_off_tomorrow, night_today)
+                    if rank == 'A':
+                        self.model.AddImplication(night_off_tomorrow, night_today)
+                    else:
+                        viol2 = self.model.NewBoolVar(f"fr012_viol_no_prev_night_{staff.id}_{next_date.day}")
+                        self.model.AddBoolAnd([night_off_tomorrow, night_today.Not()]).OnlyEnforceIf(viol2)
+                        self.model.AddBoolOr([night_off_tomorrow.Not(), night_today]).OnlyEnforceIf(viol2.Not())
+                        self._add_ranked_bool_violation(
+                            viol2, rank, "FR012",
+                            f"{staff.name} 夜勤明け前日夜勤違反",
+                            staff_id=staff.id, target_date=next_date, c_weight=weight
+                        )
                 
     def _add_fr013_max_consecutive_days(self) -> None:
         """FR013: 連続勤務の上限 (最大6日) (ランクA)"""
+        rule = self._get_facility_rule("FR013")
+        rank = self._normalize_rank(rule.get('rank', 'A') if rule else 'A')
+        weight = self._get_rule_weight(rule, 1)
         for staff in self.staff_list:
             for i in range(len(self.dates) - 6):  # 7日連続をチェック
                 work_flags = []
@@ -379,20 +556,27 @@ class ConstraintManager:
                     work_flags.append(work_flag)
                 
                 # 7日連続勤務を禁止（最大6日まで）
-                self.model.Add(sum(work_flags) <= 6)
+                if rank == 'A':
+                    self.model.Add(sum(work_flags) <= 6)
+                else:
+                    all_work = self.model.NewBoolVar(f"fr013_violation_{staff.id}_{self.dates[i].day}")
+                    self.model.AddBoolAnd(work_flags).OnlyEnforceIf(all_work)
+                    self.model.AddBoolOr([w.Not() for w in work_flags]).OnlyEnforceIf(all_work.Not())
+                    self._add_ranked_bool_violation(
+                        all_work, rank, "FR013",
+                        f"{staff.name} 7日連続勤務違反",
+                        staff_id=staff.id, target_date=self.dates[i + 6], c_weight=weight
+                    )
 
     def _add_fr022_max_consecutive_night_off_cycles(self) -> None:
         """FR022: 夜→明 サイクルの連続回数上限 (ランクA)"""
-        facility_rules = self.rules.get('facility_rules', [])
-        rule = next(
-            (r for r in facility_rules
-             if r.get('constraint_type') == 'max_consecutive_night_off_cycles' or r.get('id') == 'FR022'),
-            None
-        )
+        rule = self._get_facility_rule("FR022", "max_consecutive_night_off_cycles")
         if rule is None:
             return
 
         max_cycles = int(rule.get('max_cycles', 2))
+        rank = self._normalize_rank(rule.get('rank', 'A'))
+        weight = self._get_rule_weight(rule, 1)
         if max_cycles < 1:
             return
 
@@ -427,7 +611,17 @@ class ConstraintManager:
                     expected_flags.append(flag)
 
                 # すべて一致（= 上限超過パターン）は禁止
-                self.model.AddBoolOr([f.Not() for f in expected_flags])
+                if rank == 'A':
+                    self.model.AddBoolOr([f.Not() for f in expected_flags])
+                else:
+                    violation = self.model.NewBoolVar(f"fr022_violation_{staff.id}_{self.dates[i].day}")
+                    self.model.AddBoolAnd(expected_flags).OnlyEnforceIf(violation)
+                    self.model.AddBoolOr([f.Not() for f in expected_flags]).OnlyEnforceIf(violation.Not())
+                    self._add_ranked_bool_violation(
+                        violation, rank, "FR022",
+                        f"{staff.name} 夜→明サイクル連続超過",
+                        staff_id=staff.id, target_date=self.dates[i + pattern_len - 1], c_weight=weight
+                    )
                 
     def _add_fr005_february_holidays(self) -> None:
         """FR005: 2月の公休数は8日 - 公休+希望休=8日（有給は別枠）(ランクA)"""
@@ -492,6 +686,9 @@ class ConstraintManager:
             
     def _add_fr015_work_days_calculation(self) -> None:
         """FR015: 勤務日数の計算 - 月の日数 - 公休数の日数分勤務を割り当てる (ランクB)"""
+        rule = self._get_facility_rule("FR015")
+        rank = self._normalize_rank(rule.get('rank', 'B') if rule else 'B')
+        weight = self._get_rule_weight(rule, 1)
         total_days = len(self.dates)
         month_holiday_days = self._get_monthly_holiday_days()
         if month_holiday_days is None:
@@ -535,11 +732,14 @@ class ConstraintManager:
             self.model.Add(sum(work_flags) - expected_work_days <= penalty_over)
             self.model.Add(expected_work_days - sum(work_flags) <= penalty_under)
             
-            # 詳細情報付きでペナルティ制約を記録
-            self._add_penalty_constraint(penalty_over, staff.id, None, "FR015", 
-                                       f"{staff.name}の勤務日数制約違反（超過）")
-            self._add_penalty_constraint(penalty_under, staff.id, None, "FR015",
-                                       f"{staff.name}の勤務日数制約違反（不足）")
+            self._add_ranked_int_violation(
+                penalty_over, rank, "FR015", f"{staff.name}の勤務日数制約違反（超過）",
+                staff.id, None, weight
+            )
+            self._add_ranked_int_violation(
+                penalty_under, rank, "FR015", f"{staff.name}の勤務日数制約違反（不足）",
+                staff.id, None, weight
+            )
                 
     def _add_fr014_bath_staff_assignment(self) -> None:
         """FR014: お風呂担当の配置 (ランクB)"""
@@ -625,50 +825,52 @@ class ConstraintManager:
                 constraint_type = rule.get('constraint_type')
                 staff_id = rule.get('staff_id')
                 staff_name = rule.get('staff_name', f'スタッフ{staff_id}')
+                rank = self._normalize_rank(rule.get('rank', 'A'))
+                rule_weight = self._get_rule_weight(rule, 1)
                 
                 if not all([rule_id, constraint_type, staff_id]):
                     continue
                     
                 if constraint_type == 'no_night_shift':
                     # PR001-PR004: 夜勤不可
-                    self._add_no_night_shift_constraint(staff_id)
+                    self._add_no_night_shift_constraint(staff_id, rule_id, rank, rule_weight)
                     implemented_count += 1
-                    print(f"      - {rule_id}: {staff_name} 夜勤不可")
+                    print(f"      - {rule_id}: {staff_name} 夜勤不可 (Rank {rank})")
                     
                 elif constraint_type == 'max_night_shifts':
                     # PR006-PR008: 夜勤回数上限
                     max_count = rule.get('max_count', 5)
-                    self._add_max_night_shifts_constraint(staff_id, max_count)
+                    self._add_max_night_shifts_constraint(staff_id, max_count, rule_id, rank, rule_weight)
                     implemented_count += 1
-                    print(f"      - {rule_id}: {staff_name} 夜勤回数上限{max_count}回")
+                    print(f"      - {rule_id}: {staff_name} 夜勤回数上限{max_count}回 (Rank {rank})")
                     
                 elif constraint_type == 'day_off_after_night_shift':
                     # PR009: 夜勤明けは公休
-                    self._add_day_off_after_night_shift_constraint(staff_id)
+                    self._add_day_off_after_night_shift_constraint(staff_id, rule_id, rank, rule_weight)
                     implemented_count += 1
-                    print(f"      - {rule_id}: {staff_name} 夜勤明けは公休")
+                    print(f"      - {rule_id}: {staff_name} 夜勤明けは公休 (Rank {rank})")
                     
                 elif constraint_type == 'fixed_day_off':
                     # PR005: 固定休日
                     day_of_week = rule.get('day_of_week', 0)  # 0=日曜日
-                    self._add_fixed_day_off_constraint(staff_id, day_of_week)
+                    self._add_fixed_day_off_constraint(staff_id, day_of_week, rule_id, rank, rule_weight)
                     implemented_count += 1
                     weekdays = ['日', '月', '火', '水', '木', '金', '土']
                     day_name = weekdays[day_of_week] if 0 <= day_of_week <= 6 else '不明'
-                    print(f"      - {rule_id}: {staff_name} {day_name}曜日固定休")
+                    print(f"      - {rule_id}: {staff_name} {day_name}曜日固定休 (Rank {rank})")
 
                 elif constraint_type == 'fixed_public_holiday_off':
                     # 恒久休み: 勤務系シフトは不可、休暇系シフトのみ許可
-                    self._add_fixed_public_holiday_off_constraint(staff_id)
+                    self._add_fixed_public_holiday_off_constraint(staff_id, rule_id, rank, rule_weight)
                     implemented_count += 1
-                    print(f"      - {rule_id}: {staff_name} 祝日休み固定")
+                    print(f"      - {rule_id}: {staff_name} 祝日休み固定 (Rank {rank})")
 
                 elif constraint_type == 'max_consecutive_day_shifts':
                     # 日勤連続上限（ランクB）
                     max_count = rule.get('max_count', 2)
-                    self._add_max_consecutive_day_shifts_constraint(staff_id, max_count)
+                    self._add_max_consecutive_day_shifts_constraint(staff_id, max_count, rule_id, rank, rule_weight)
                     implemented_count += 1
-                    print(f"      - {rule_id}: {staff_name} 日勤連続上限{max_count}日")
+                    print(f"      - {rule_id}: {staff_name} 日勤連続上限{max_count}日 (Rank {rank})")
                 
                 # 複雑な制約は一時的にスキップ
                 # TODO: 段階的に追加
@@ -678,13 +880,27 @@ class ConstraintManager:
         except Exception as e:
             raise Exception(f"個人ルール制約追加エラー: {e}")
             
-    def _add_no_night_shift_constraint(self, staff_id: int) -> None:
+    def _add_no_night_shift_constraint(
+        self, staff_id: int, rule_id: str = "PR", rank: str = "A", c_weight: int = 1
+    ) -> None:
         """夜勤不可制約"""
         for target_date in self.dates:
             if (staff_id, target_date) in self.shift:
-                self.model.Add(self.shift[(staff_id, target_date)] != ShiftType.NIGHT.value)
+                if rank == 'A':
+                    self.model.Add(self.shift[(staff_id, target_date)] != ShiftType.NIGHT.value)
+                else:
+                    is_night = self.model.NewBoolVar(f"{rule_id}_no_night_{staff_id}_{target_date.day}")
+                    self.model.Add(self.shift[(staff_id, target_date)] == ShiftType.NIGHT.value).OnlyEnforceIf(is_night)
+                    self.model.Add(self.shift[(staff_id, target_date)] != ShiftType.NIGHT.value).OnlyEnforceIf(is_night.Not())
+                    self._add_ranked_bool_violation(
+                        is_night, rank, rule_id,
+                        f"スタッフ{staff_id} 夜勤不可違反",
+                        staff_id=staff_id, target_date=target_date, c_weight=c_weight
+                    )
                 
-    def _add_fixed_day_off_constraint(self, staff_id: int, day_of_week: int) -> None:
+    def _add_fixed_day_off_constraint(
+        self, staff_id: int, day_of_week: int, rule_id: str = "PR", rank: str = "A", c_weight: int = 1
+    ) -> None:
         """固定休日制約 (day_of_week: 0=日, 1=月, ..., 6=土)"""
         for target_date in self.dates:
             if target_date.weekday() == (day_of_week - 1) % 7:  # Python weekday調整
@@ -695,10 +911,20 @@ class ConstraintManager:
                         ShiftType.REQUEST_HOLIDAY.value, 
                         ShiftType.PAID_HOLIDAY.value
                     ]
-                    self.model.AddAllowedAssignments([self.shift[(staff_id, target_date)]], 
-                                                   [[shift] for shift in rest_shifts])
+                    if rank == 'A':
+                        self.model.AddAllowedAssignments([self.shift[(staff_id, target_date)]],
+                                                       [[shift] for shift in rest_shifts])
+                    else:
+                        work_flag = self._create_work_flag(staff_id, target_date, f"{rule_id}_fixed_day_off")
+                        self._add_ranked_bool_violation(
+                            work_flag, rank, rule_id,
+                            f"スタッフ{staff_id} 固定休日違反",
+                            staff_id=staff_id, target_date=target_date, c_weight=c_weight
+                        )
 
-    def _add_fixed_public_holiday_off_constraint(self, staff_id: int) -> None:
+    def _add_fixed_public_holiday_off_constraint(
+        self, staff_id: int, rule_id: str = "PR", rank: str = "A", c_weight: int = 1
+    ) -> None:
         """祝日のみ休暇系シフトに限定（非祝日は制約しない）"""
         rest_shifts = [
             ShiftType.PUBLIC_HOLIDAY.value,
@@ -709,10 +935,18 @@ class ConstraintManager:
             if not self._is_japanese_public_holiday(target_date):
                 continue
             if (staff_id, target_date) in self.shift:
-                self.model.AddAllowedAssignments(
-                    [self.shift[(staff_id, target_date)]],
-                    [[shift] for shift in rest_shifts]
-                )
+                if rank == 'A':
+                    self.model.AddAllowedAssignments(
+                        [self.shift[(staff_id, target_date)]],
+                        [[shift] for shift in rest_shifts]
+                    )
+                else:
+                    work_flag = self._create_work_flag(staff_id, target_date, f"{rule_id}_fixed_holiday_off")
+                    self._add_ranked_bool_violation(
+                        work_flag, rank, rule_id,
+                        f"スタッフ{staff_id} 祝日休み固定違反",
+                        staff_id=staff_id, target_date=target_date, c_weight=c_weight
+                    )
 
     def _is_japanese_public_holiday(self, target_date: date) -> bool:
         """対象日が日本の祝日かを返す（振替休日・国民の休日を含む）"""
@@ -787,7 +1021,9 @@ class ConstraintManager:
         """1980-2099年向け近似式"""
         return int(23.2488 + 0.242194 * (year - 1980) - int((year - 1980) / 4))
                                                    
-    def _add_max_night_shifts_constraint(self, staff_id: int, max_count: int) -> None:
+    def _add_max_night_shifts_constraint(
+        self, staff_id: int, max_count: int, rule_id: str = "PR", rank: str = "A", c_weight: int = 1
+    ) -> None:
         """夜勤回数上限制約"""
         night_shift_bool_vars = []
         for target_date in self.dates:
@@ -797,9 +1033,20 @@ class ConstraintManager:
                 self.model.Add(self.shift[(staff_id, target_date)] != ShiftType.NIGHT.value).OnlyEnforceIf(bool_var.Not())
                 night_shift_bool_vars.append(bool_var)
         if night_shift_bool_vars:
-            self.model.Add(sum(night_shift_bool_vars) <= max_count)
+            if rank == 'A':
+                self.model.Add(sum(night_shift_bool_vars) <= max_count)
+            else:
+                over_var = self.model.NewIntVar(0, len(night_shift_bool_vars), f"{rule_id}_max_night_over_{staff_id}")
+                self.model.Add(sum(night_shift_bool_vars) - max_count <= over_var)
+                self.model.Add(over_var >= 0)
+                self._add_ranked_int_violation(
+                    over_var, rank, rule_id, f"スタッフ{staff_id} 夜勤回数上限超過",
+                    staff_id=staff_id, target_date=None, c_weight=c_weight
+                )
         
-    def _add_day_off_after_night_shift_constraint(self, staff_id: int) -> None:
+    def _add_day_off_after_night_shift_constraint(
+        self, staff_id: int, rule_id: str = "PR", rank: str = "A", c_weight: int = 1
+    ) -> None:
         """夜勤明けは公休制約 - OR-Tools CP-SAT対応版"""
         for i, target_date in enumerate(self.dates[:-2]):  # 後2日を除外
             if i + 2 < len(self.dates):
@@ -823,14 +1070,35 @@ class ConstraintManager:
                 self.model.Add(self.shift[(staff_id, day_after_next)] == ShiftType.PUBLIC_HOLIDAY.value).OnlyEnforceIf(public_holiday_day_after)
                 self.model.Add(self.shift[(staff_id, day_after_next)] != ShiftType.PUBLIC_HOLIDAY.value).OnlyEnforceIf(public_holiday_day_after.Not())
                 
-                # 制約: 夜勤 → 翌日夜勤明け → 翌々日公休
-                self.model.AddImplication(night_today, night_off_tomorrow)
-                self.model.AddImplication(night_off_tomorrow, public_holiday_day_after)
+                if rank == 'A':
+                    # 制約: 夜勤 → 翌日夜勤明け → 翌々日公休
+                    self.model.AddImplication(night_today, night_off_tomorrow)
+                    self.model.AddImplication(night_off_tomorrow, public_holiday_day_after)
+                else:
+                    v1 = self.model.NewBoolVar(f"{rule_id}_viol_1_{staff_id}_{target_date.day}")
+                    self.model.AddBoolAnd([night_today, night_off_tomorrow.Not()]).OnlyEnforceIf(v1)
+                    self.model.AddBoolOr([night_today.Not(), night_off_tomorrow]).OnlyEnforceIf(v1.Not())
+                    self._add_ranked_bool_violation(
+                        v1, rank, rule_id,
+                        f"スタッフ{staff_id} 夜勤→夜勤明け違反",
+                        staff_id=staff_id, target_date=target_date, c_weight=c_weight
+                    )
+
+                    v2 = self.model.NewBoolVar(f"{rule_id}_viol_2_{staff_id}_{next_date.day}")
+                    self.model.AddBoolAnd([night_off_tomorrow, public_holiday_day_after.Not()]).OnlyEnforceIf(v2)
+                    self.model.AddBoolOr([night_off_tomorrow.Not(), public_holiday_day_after]).OnlyEnforceIf(v2.Not())
+                    self._add_ranked_bool_violation(
+                        v2, rank, rule_id,
+                        f"スタッフ{staff_id} 夜勤明け→公休違反",
+                        staff_id=staff_id, target_date=next_date, c_weight=c_weight
+                    )
                 
                 # 特別なケース: 夜勤明けの日に希望休・有給がある場合の考慮
                 # 希望休制約が最優先なので、希望休がある日は公休制約を緩和
 
-    def _add_max_consecutive_day_shifts_constraint(self, staff_id: int, max_count: int) -> None:
+    def _add_max_consecutive_day_shifts_constraint(
+        self, staff_id: int, max_count: int, rule_id: str = "PR019", rank: str = "B", c_weight: int = 1
+    ) -> None:
         """日勤連続上限制約（ランクB）"""
         if max_count < 1:
             return
@@ -852,22 +1120,18 @@ class ConstraintManager:
                 is_day_vars.append(is_day)
 
             violation = self.model.NewBoolVar(
-                f"pr019_violation_{staff_id}_{window_dates[0].day}_{window_dates[-1].day}"
+                f"{rule_id}_violation_{staff_id}_{window_dates[0].day}_{window_dates[-1].day}"
             )
             self.model.AddBoolAnd(is_day_vars).OnlyEnforceIf(violation)
             self.model.AddBoolOr([v.Not() for v in is_day_vars]).OnlyEnforceIf(violation.Not())
-
-            penalty_var = self.model.NewIntVar(0, 1, f"penalty_pr019_{staff_id}_{window_dates[0].day}")
-            self.model.Add(penalty_var == 1).OnlyEnforceIf(violation)
-            self.model.Add(penalty_var == 0).OnlyEnforceIf(violation.Not())
-
-            self._add_penalty_constraint(
-                penalty_var,
-                staff_id,
-                window_dates[-1],
-                "PR019",
-                f"{staff_name}の日勤連続{window_size}日違反（上限{max_count}日）"
-            )
+            if rank == 'A':
+                self.model.AddBoolOr([v.Not() for v in is_day_vars])
+            else:
+                self._add_ranked_bool_violation(
+                    violation, rank, rule_id,
+                    f"{staff_name}の日勤連続{window_size}日違反（上限{max_count}日）",
+                    staff_id=staff_id, target_date=window_dates[-1], c_weight=c_weight
+                )
                 
     def add_relationship_constraints(self) -> None:
         """人間関係ルール制約（RR001）の追加"""
@@ -882,6 +1146,8 @@ class ConstraintManager:
                 constraint_type = rule.get('constraint_type')
                 staff_ids = rule.get('staff_ids', [])
                 shift_type = rule.get('shift_type')
+                rank = self._normalize_rank(rule.get('rank', 'A'))
+                rule_weight = self._get_rule_weight(rule, 1)
                 
                 if not all([rule_id, constraint_type, staff_ids]) or len(staff_ids) != 2:
                     continue
@@ -892,18 +1158,20 @@ class ConstraintManager:
                     if staff_id1 not in self.staff_by_id or staff_id2 not in self.staff_by_id:
                         continue
                     # RR001: 同日夜勤不可制約を実装
-                    self._add_cannot_work_together_night(staff_id1, staff_id2)
+                    self._add_cannot_work_together_night(staff_id1, staff_id2, rule_id, rank, rule_weight)
                     implemented_count += 1
                     staff1_name = rule.get('staff_names', [f'スタッフ{staff_id1}', f'スタッフ{staff_id2}'])[0]
                     staff2_name = rule.get('staff_names', [f'スタッフ{staff_id1}', f'スタッフ{staff_id2}'])[1]
-                    print(f"      - {rule_id}: {staff1_name} & {staff2_name} 同日夜勤不可")
+                    print(f"      - {rule_id}: {staff1_name} & {staff2_name} 同日夜勤不可 (Rank {rank})")
                         
             print(f"   ✅ 人間関係ルール制約 {implemented_count}個 追加完了")
             
         except Exception as e:
             raise Exception(f"人間関係ルール制約追加エラー: {e}")
             
-    def _add_cannot_work_together_night(self, staff_id1: int, staff_id2: int) -> None:
+    def _add_cannot_work_together_night(
+        self, staff_id1: int, staff_id2: int, rule_id: str = "RR001", rank: str = "A", c_weight: int = 1
+    ) -> None:
         """同日夜勤不可制約 - OR-Tools CP-SAT対応版"""
         for target_date in self.dates:
             # 各スタッフの夜勤フラグを明示的にboolean変数として作成
@@ -917,8 +1185,18 @@ class ConstraintManager:
             self.model.Add(self.shift[(staff_id2, target_date)] == ShiftType.NIGHT.value).OnlyEnforceIf(night2_var)
             self.model.Add(self.shift[(staff_id2, target_date)] != ShiftType.NIGHT.value).OnlyEnforceIf(night2_var.Not())
             
-            # 制約: 同日に両方が夜勤になることを禁止
-            self.model.Add(night1_var + night2_var <= 1)
+            if rank == 'A':
+                # 制約: 同日に両方が夜勤になることを禁止
+                self.model.Add(night1_var + night2_var <= 1)
+            else:
+                both_night = self.model.NewBoolVar(f"{rule_id}_both_night_{staff_id1}_{staff_id2}_{target_date.day}")
+                self.model.AddBoolAnd([night1_var, night2_var]).OnlyEnforceIf(both_night)
+                self.model.AddBoolOr([night1_var.Not(), night2_var.Not()]).OnlyEnforceIf(both_night.Not())
+                self._add_ranked_bool_violation(
+                    both_night, rank, rule_id,
+                    f"スタッフ{staff_id1}と{staff_id2}の同日夜勤違反",
+                    staff_id=None, target_date=target_date, c_weight=c_weight
+                )
             
     def add_request_holiday_constraints(self) -> None:
         """希望休み制約の追加 - 厳密実装"""
@@ -1008,12 +1286,17 @@ class ConstraintManager:
         # 詳細な違反情報を記録した制約をチェック
         for penalty_var, staff_id, target_date, constraint_name, description in self.constraint_violations:
             if solver.Value(penalty_var) > 0:
+                staff_obj = self.staff_by_id.get(staff_id) if staff_id is not None else None
                 violations.append({
                     'type': 'RankB',
-                    'staff_id': staff_id,
-                    'date': target_date.strftime('%Y-%m-%d') if target_date else None,
-                    'message': description,
+                    'rank': 'B',
+                    'rule_id': constraint_name,
                     'constraint_name': constraint_name,
+                    'staff_id': staff_id,
+                    'staff_name': staff_obj.name if staff_obj else None,
+                    'date': target_date.strftime('%Y-%m-%d') if target_date else None,
+                    'detail': description,
+                    'message': description,
                     'penalty': solver.Value(penalty_var)
                 })
         
@@ -1023,10 +1306,14 @@ class ConstraintManager:
             if id(penalty_var) not in recorded_penalty_ids and solver.Value(penalty_var) > 0:
                 violations.append({
                     'type': 'RankB',
-                    'staff_id': None,
-                    'date': None,
-                    'message': 'ランクB制約違反',
+                    'rank': 'B',
+                    'rule_id': 'Unknown',
                     'constraint_name': 'Unknown',
+                    'staff_id': None,
+                    'staff_name': None,
+                    'date': None,
+                    'detail': 'ランクB制約違反',
+                    'message': 'ランクB制約違反',
                     'penalty': solver.Value(penalty_var)
                 })
                 
@@ -1035,8 +1322,12 @@ class ConstraintManager:
             if solver.Value(weight_var) > 0:
                 violations.append({
                     'type': 'RankC',
+                    'rank': 'C',
+                    'rule_id': 'RankC',
                     'staff_id': None,
+                    'staff_name': None,
                     'date': None,
+                    'detail': 'ランクC制約非最適',
                     'message': 'ランクC制約非最適',
                     'constraint_name': 'RankC',
                     'weight': solver.Value(weight_var)
@@ -1049,9 +1340,104 @@ class ConstraintManager:
         """ペナルティ制約と違反情報を記録"""
         self.penalty_vars.append(penalty_var)
         self.constraint_violations.append((penalty_var, staff_id, target_date, constraint_name, description))
+
+    def _get_facility_rule(self, rule_id: str, constraint_type: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        for rule in self.rules.get('facility_rules', []):
+            if rule.get('id') == rule_id:
+                return rule
+            if constraint_type and rule.get('constraint_type') == constraint_type:
+                return rule
+        return None
+
+    @staticmethod
+    def _get_rule_weight(rule: Optional[Dict[str, Any]], default: int = 1) -> int:
+        if not rule:
+            return default
+        try:
+            return max(1, int(rule.get('weight', default)))
+        except Exception:
+            return default
+
+    @staticmethod
+    def _normalize_rank(rank: Any) -> str:
+        value = str(rank).upper() if rank is not None else "A"
+        if value not in ("A", "B", "C"):
+            return "A"
+        return value
+
+    def _add_ranked_bool_violation(
+        self,
+        violation_bool: cp_model.IntVar,
+        rank: str,
+        constraint_name: str,
+        description: str,
+        staff_id: Optional[int] = None,
+        target_date: Optional[date] = None,
+        c_weight: int = 1,
+    ) -> None:
+        """rankに応じて違反boolをハード/ペナルティ/重みへ変換する。"""
+        self._add_ranked_int_violation(
+            violation_bool, rank, constraint_name, description,
+            staff_id=staff_id, target_date=target_date, c_weight=c_weight
+        )
+
+    def _add_ranked_int_violation(
+        self,
+        violation_amount: cp_model.IntVar,
+        rank: str,
+        constraint_name: str,
+        description: str,
+        staff_id: Optional[int] = None,
+        target_date: Optional[date] = None,
+        c_weight: int = 1,
+    ) -> None:
+        """rankに応じて違反量(int var)をハード/ペナルティ/重みへ変換する。"""
+        normalized_rank = self._normalize_rank(rank)
+        if normalized_rank == "A":
+            self.model.Add(violation_amount == 0)
+            return
+
+        self._rank_var_seq += 1
+        seq = self._rank_var_seq
+        weight = max(1, int(c_weight))
+        domain = violation_amount.Proto().domain
+        ub = domain[-1] if domain else 1000
+        weighted_ub = max(1, ub * weight)
+        weighted_var = self.model.NewIntVar(
+            0, weighted_ub,
+            f"weighted_{constraint_name}_{staff_id or 'all'}_{target_date.day if target_date else 'm'}_{seq}"
+        )
+        self.model.Add(weighted_var == violation_amount * weight)
+
+        if normalized_rank == "B":
+            self._add_penalty_constraint(weighted_var, staff_id, target_date, constraint_name, description)
+            return
+
+        # Rank C
+        self.weight_vars.append(weighted_var)
+
+    def _create_work_flag(self, staff_id: int, target_date: date, prefix: str) -> cp_model.IntVar:
+        """勤務系( 日/夜/明 )のいずれかなら1のフラグを返す。"""
+        is_day = self.model.NewBoolVar(f"{prefix}_day_{staff_id}_{target_date.day}")
+        is_night = self.model.NewBoolVar(f"{prefix}_night_{staff_id}_{target_date.day}")
+        is_night_off = self.model.NewBoolVar(f"{prefix}_nightoff_{staff_id}_{target_date.day}")
+        work_flag = self.model.NewBoolVar(f"{prefix}_work_{staff_id}_{target_date.day}")
+
+        self.model.Add(self.shift[(staff_id, target_date)] == ShiftType.DAY.value).OnlyEnforceIf(is_day)
+        self.model.Add(self.shift[(staff_id, target_date)] != ShiftType.DAY.value).OnlyEnforceIf(is_day.Not())
+        self.model.Add(self.shift[(staff_id, target_date)] == ShiftType.NIGHT.value).OnlyEnforceIf(is_night)
+        self.model.Add(self.shift[(staff_id, target_date)] != ShiftType.NIGHT.value).OnlyEnforceIf(is_night.Not())
+        self.model.Add(self.shift[(staff_id, target_date)] == ShiftType.NIGHT_SHIFT_OFF.value).OnlyEnforceIf(is_night_off)
+        self.model.Add(self.shift[(staff_id, target_date)] != ShiftType.NIGHT_SHIFT_OFF.value).OnlyEnforceIf(is_night_off.Not())
+
+        self.model.AddBoolOr([is_day, is_night, is_night_off]).OnlyEnforceIf(work_flag)
+        self.model.AddBoolAnd([is_day.Not(), is_night.Not(), is_night_off.Not()]).OnlyEnforceIf(work_flag.Not())
+        return work_flag
     
     def _add_fr017_holiday_adjacent_optimization(self) -> None:
         """FR017: 公休の前後配置最適化 (ランクC)"""
+        rule = self._get_facility_rule("FR017", "holiday_adjacent_optimization")
+        weight = self._get_rule_weight(rule, 1)
         print("      - FR017: 公休の前後配置最適化")
         
         for staff in self.staff_list:
@@ -1109,10 +1495,18 @@ class ConstraintManager:
                 self.model.Add(weight_var == 1).OnlyEnforceIf(optimization_var)
                 self.model.Add(weight_var == 0).OnlyEnforceIf(optimization_var.Not())
                 
-                self.weight_vars.append(weight_var)
+                if weight == 1:
+                    self.weight_vars.append(weight_var)
+                else:
+                    weighted = self.model.NewIntVar(0, weight, f"weight_fr017_{staff.id}_{target_date.day}")
+                    self.model.Add(weighted == weight_var * weight)
+                    self.weight_vars.append(weighted)
 
     def _add_fr018_max_consecutive_holidays(self) -> None:
         """FR018: 連休制限と2連休促進 (ランクB)"""
+        rule = self._get_facility_rule("FR018", "max_consecutive_rest_days")
+        rank = self._normalize_rank(rule.get('rank', 'B') if rule else 'B')
+        weight = self._get_rule_weight(rule, 1)
         print("      - FR018: 連休制限と2連休促進")
         
         for staff in self.staff_list:
@@ -1153,13 +1547,10 @@ class ConstraintManager:
                 self.model.Add(penalty_var == 1000).OnlyEnforceIf(consecutive_3_rest)
                 self.model.Add(penalty_var == 0).OnlyEnforceIf(consecutive_3_rest.Not())
                 
-                # 違反情報を記録
-                self._add_penalty_constraint(
-                    penalty_var, 
-                    staff.id, 
-                    dates_triplet[1],  # 中央の日付を代表として使用
-                    "FR018",
-                    f"{staff.name}の{dates_triplet[0].day}-{dates_triplet[2].day}日に3連休が発生"
+                self._add_ranked_int_violation(
+                    penalty_var, rank, "FR018",
+                    f"{staff.name}の{dates_triplet[0].day}-{dates_triplet[2].day}日に3連休が発生",
+                    staff.id, dates_triplet[1], weight
                 )
 
     def _add_fr020_day_shift_balance_optimization(self) -> None:
@@ -1265,3 +1656,131 @@ class ConstraintManager:
 
         # 目的関数で最小化するため、重み付きで追加
         self.weight_vars.append(night_count_range * weight)
+
+    def _add_fr024_no_day_after_night_off(self) -> None:
+        """FR024: 夜勤明け(明) の次日に 日勤 を禁止"""
+        rule = self._get_facility_rule("FR024", "no_day_after_night_off")
+        if rule is None:
+            return
+
+        rank = self._normalize_rank(rule.get('rank', 'B'))
+        weight = self._get_rule_weight(rule, 1)
+        print("      - FR024: 明けの後の日勤禁止")
+
+        if len(self.dates) < 2:
+            return
+
+        for staff in self.staff_list:
+            for i in range(len(self.dates) - 1):
+                d1 = self.dates[i]
+                d2 = self.dates[i + 1]
+
+                is_off = self.model.NewBoolVar(f"fr024_off_{staff.id}_{d2.day}_{i}")
+                is_day = self.model.NewBoolVar(f"fr024_day_{staff.id}_{d2.day}_{i}")
+
+                self.model.Add(self.shift[(staff.id, d1)] == ShiftType.NIGHT_SHIFT_OFF.value).OnlyEnforceIf(is_off)
+                self.model.Add(self.shift[(staff.id, d1)] != ShiftType.NIGHT_SHIFT_OFF.value).OnlyEnforceIf(is_off.Not())
+                self.model.Add(self.shift[(staff.id, d2)] == ShiftType.DAY.value).OnlyEnforceIf(is_day)
+                self.model.Add(self.shift[(staff.id, d2)] != ShiftType.DAY.value).OnlyEnforceIf(is_day.Not())
+
+                violation = self.model.NewBoolVar(f"fr024_violation_{staff.id}_{d2.day}_{i}")
+                self.model.AddBoolAnd([is_off, is_day]).OnlyEnforceIf(violation)
+                self.model.AddBoolOr([is_off.Not(), is_day.Not()]).OnlyEnforceIf(violation.Not())
+
+                self._add_ranked_bool_violation(
+                    violation, rank, "FR024",
+                    f"{staff.name} の 明→日 パターン違反",
+                    staff_id=staff.id, target_date=d2, c_weight=weight
+                )
+
+    def _add_fr025_night_shift_priority_reduction(self) -> None:
+        """FR025: 夜勤均等化時の優先抑制（Rank B推奨）"""
+        rule = self._get_facility_rule("FR025", "night_shift_priority_reduction")
+        if rule is None:
+            return
+
+        rank = self._normalize_rank(rule.get('rank', 'B'))
+        weight = self._get_rule_weight(rule, 1)
+
+        high_ids = set(rule.get('high_priority_staff_ids', []))
+        medium_ids = set(rule.get('medium_priority_staff_ids', []))
+        high_penalty = max(1, int(rule.get('high_priority_penalty', 3)))
+        medium_penalty = max(1, int(rule.get('medium_priority_penalty', 2)))
+        other_penalty = max(1, int(rule.get('other_penalty', 1)))
+
+        print("      - FR025: 夜勤優先抑制")
+
+        for staff in self.staff_list:
+            if staff.id in high_ids:
+                coeff = high_penalty
+            elif staff.id in medium_ids:
+                coeff = medium_penalty
+            else:
+                coeff = other_penalty
+
+            for target_date in self.dates:
+                is_night = self.model.NewBoolVar(f"fr025_night_{staff.id}_{target_date.day}")
+                self.model.Add(self.shift[(staff.id, target_date)] == ShiftType.NIGHT.value).OnlyEnforceIf(is_night)
+                self.model.Add(self.shift[(staff.id, target_date)] != ShiftType.NIGHT.value).OnlyEnforceIf(is_night.Not())
+
+                weighted_night = self.model.NewIntVar(0, coeff, f"fr025_weighted_{staff.id}_{target_date.day}")
+                self.model.Add(weighted_night == is_night * coeff)
+
+                self._add_ranked_int_violation(
+                    weighted_night,
+                    rank,
+                    "FR025",
+                    f"{staff.name} の夜勤優先抑制違反",
+                    staff_id=staff.id,
+                    target_date=target_date,
+                    c_weight=weight
+                )
+
+    def _add_fr026_max_consecutive_equivalent_work_days(self) -> None:
+        """FR026: 日/夜/明 を勤務として数えた連勤上限（6連勤相当禁止）"""
+        rule = self._get_facility_rule("FR026", "max_consecutive_equivalent_work_days")
+        if rule is None:
+            return
+
+        rank = self._normalize_rank(rule.get('rank', 'B'))
+        weight = self._get_rule_weight(rule, 1)
+        max_equivalent_days = int(rule.get('max_equivalent_days', 5))
+        if max_equivalent_days < 1:
+            return
+
+        # max=5 の場合、6日すべて勤務(日/夜/明)の窓を違反とする
+        window_size = max_equivalent_days + 1
+        if len(self.dates) < window_size:
+            return
+
+        print(f"      - FR026: {window_size}連勤相当禁止（日/夜/明ベース）")
+
+        for staff in self.staff_list:
+            for i in range(len(self.dates) - window_size + 1):
+                work_flags = []
+                for j in range(window_size):
+                    target_date = self.dates[i + j]
+                    work_flags.append(
+                        self._create_work_flag(
+                            staff.id,
+                            target_date,
+                            f"fr026_{staff.id}_{i}_{j}"
+                        )
+                    )
+
+                violation = self.model.NewBoolVar(f"fr026_violation_{staff.id}_{i}")
+                self.model.AddBoolAnd(work_flags).OnlyEnforceIf(violation)
+                self.model.AddBoolOr([f.Not() for f in work_flags]).OnlyEnforceIf(violation.Not())
+
+                if rank == 'A':
+                    self.model.AddBoolOr([f.Not() for f in work_flags])
+                else:
+                    self._add_ranked_bool_violation(
+                        violation,
+                        rank,
+                        "FR026",
+                        f"{staff.name} の{window_size}連勤相当違反",
+                        staff_id=staff.id,
+                        target_date=self.dates[i + window_size - 1],
+                        c_weight=weight
+                    )

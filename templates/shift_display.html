@@ -525,6 +525,46 @@
             opacity: 0.6;
             cursor: not-allowed;
         }
+        .modal-overlay {
+            position: fixed;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.45);
+            display: none;
+            align-items: center;
+            justify-content: center;
+            z-index: 2000;
+        }
+        .modal-overlay.show {
+            display: flex;
+        }
+        .modal-card {
+            background: #fff;
+            border-radius: 12px;
+            width: min(680px, 92vw);
+            max-height: 80vh;
+            overflow: auto;
+            padding: 20px;
+            box-shadow: 0 12px 30px rgba(0,0,0,0.2);
+        }
+        .modal-card h3 {
+            margin-top: 0;
+        }
+        .carryover-list {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+            gap: 8px 16px;
+            margin: 14px 0 20px;
+        }
+        .carryover-item {
+            display: flex;
+            gap: 8px;
+            align-items: center;
+        }
+        .modal-actions {
+            display: flex;
+            justify-content: flex-end;
+            gap: 10px;
+        }
     </style>
 </head>
 <body>
@@ -575,6 +615,18 @@
         <div id="loading" class="loading">
             <div class="spinner"></div>
             <p>シフトを生成中...</p>
+        </div>
+
+        <div id="carryover-modal" class="modal-overlay">
+            <div class="modal-card">
+                <h3>前月末シフトの入力</h3>
+                <p id="carryover-help-text">前月末の各スタッフのシフトを入力してください。</p>
+                <div id="carryover-staff-list" class="carryover-list"></div>
+                <div class="modal-actions">
+                    <button class="btn btn-secondary" onclick="closeCarryoverModal()">キャンセル</button>
+                    <button class="btn btn-primary" onclick="saveCarryoverAndGenerate()">保存して生成</button>
+                </div>
+            </div>
         </div>
 
         <!-- タブ表示 -->
@@ -653,6 +705,8 @@
     <script>
         let currentMonth = '';
         let shiftData = null;
+        let carryoverCandidates = [];
+        const carryoverShiftOptions = ['', '日', '夜', '明', '休', '希', '有'];
 
         function getDefaultStartMonth() {
             const today = new Date();
@@ -761,6 +815,11 @@
 
         // シフト生成（localStorage保存対応）
         async function generateShift() {
+            const canProceed = await ensureCarryoverReady();
+            if (!canProceed) {
+                return;
+            }
+
             showLoading(true);
             clearShiftData();
             
@@ -773,6 +832,16 @@
                     method: 'POST'
                 });
                 const result = await response.json();
+
+                if (response.status === 409 && result.status === 'need_carryover') {
+                    showAlert('warning', result.message || '前月末夜勤者の入力が必要です');
+                    const statusResult = await fetch(`/api/shift/carryover/${currentMonth}/status`);
+                    const statusJson = await statusResult.json();
+                    if (statusJson.status === 'need_input') {
+                        openCarryoverModal(statusJson.data);
+                    }
+                    return;
+                }
                 
                 if (result.status === 'success') {
                     shiftData = result.data;
@@ -795,6 +864,97 @@
                 showAlert('error', `エラーが発生しました: ${error.message}`);
             } finally {
                 showLoading(false);
+            }
+        }
+
+        async function ensureCarryoverReady() {
+            try {
+                const response = await fetch(`/api/shift/carryover/${currentMonth}/status`);
+                const result = await response.json();
+                if (result.status === 'success') {
+                    return true;
+                }
+                if (result.status === 'need_input') {
+                    openCarryoverModal(result.data);
+                    return false;
+                }
+                showAlert('error', result.message || '前月末引継ぎ情報の確認に失敗しました');
+                return false;
+            } catch (error) {
+                showAlert('error', `前月末引継ぎ情報の確認に失敗しました: ${error.message}`);
+                return false;
+            }
+        }
+
+        function openCarryoverModal(data) {
+            carryoverCandidates = data.staff_candidates || [];
+            const previousMonth = data.previous_month || '前月';
+            const prefill = data.prefill_prev_month_last_shifts || {};
+            document.getElementById('carryover-help-text').textContent =
+                `${previousMonth}末の全スタッフのシフトを入力してください。`;
+
+            const list = document.getElementById('carryover-staff-list');
+            list.innerHTML = '';
+            carryoverCandidates.forEach(staff => {
+                const label = document.createElement('label');
+                label.className = 'carryover-item';
+                const optionsHtml = carryoverShiftOptions
+                    .map(v => `<option value="${v}">${v === '' ? '選択' : v}</option>`)
+                    .join('');
+                label.innerHTML = `
+                    <span>${staff.name} (${staff.staff_class})</span>
+                    <select data-staff-id="${staff.id}">${optionsHtml}</select>
+                `;
+                list.appendChild(label);
+                const select = label.querySelector('select');
+                const key = String(staff.id);
+                if (prefill[key]) {
+                    select.value = prefill[key];
+                }
+            });
+
+            document.getElementById('carryover-modal').classList.add('show');
+        }
+
+        function closeCarryoverModal() {
+            document.getElementById('carryover-modal').classList.remove('show');
+        }
+
+        async function saveCarryoverAndGenerate() {
+            try {
+                const prevMonthLastShifts = {};
+                const selects = Array.from(document.querySelectorAll('#carryover-staff-list select[data-staff-id]'));
+                const missing = [];
+                selects.forEach(select => {
+                    const staffId = Number(select.getAttribute('data-staff-id'));
+                    const shiftType = select.value;
+                    if (!shiftType) {
+                        missing.push(staffId);
+                        return;
+                    }
+                    prevMonthLastShifts[staffId] = shiftType;
+                });
+
+                if (missing.length > 0) {
+                    showAlert('error', '未入力のスタッフがあります。全員分の前月末シフトを選択してください。');
+                    return;
+                }
+
+                const response = await fetch(`/api/shift/carryover/${currentMonth}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ prev_month_last_shifts: prevMonthLastShifts })
+                });
+                const result = await response.json();
+                if (result.status !== 'success') {
+                    showAlert('error', result.message || '前月末シフトの保存に失敗しました');
+                    return;
+                }
+                closeCarryoverModal();
+                showAlert('success', '前月末シフトを保存しました。シフト生成を開始します。');
+                await generateShift();
+            } catch (error) {
+                showAlert('error', `前月末シフトの保存に失敗しました: ${error.message}`);
             }
         }
 
@@ -1585,250 +1745,44 @@
                 `;
                 return;
             }
-
-            // デバッグ用：違反データ構造を詳細確認
-            console.log('=== 違反データ詳細確認 ===');
-            console.log('違反データ件数:', shiftData.violations.length);
-            console.log('全違反データ:', shiftData.violations);
-            
-            // 最初の3つのデータを完全に出力
-            shiftData.violations.slice(0, 3).forEach((violation, index) => {
-                console.log(`\n--- 違反データ[${index}] ---`);
-                console.log('全フィールド:', Object.keys(violation));
-                console.log('データ内容:', JSON.stringify(violation, null, 2));
-            });
-            
-            // 改善されたフィルタリング条件（より緩い条件）
-            const validViolations = shiftData.violations.filter(v => {
-                console.log('フィルタリング対象:', v);
-                // 違反タイプが存在し、空白でないメッセージがある、または具体的なスタッフ情報がある
-                const isValid = v.type && (
-                    (v.message && v.message !== '' && v.message !== '詳細不明') ||
-                    v.staff_id !== null ||
-                    v.date !== null ||
-                    v.constraint_name
-                );
-                console.log(`  >>> 有効判定: ${isValid}`);
-                return isValid;
-            });
-            
-            console.log('フィルタリング後の有効な違反データ:', validViolations);
-            console.log('有効な違反データ件数:', validViolations.length);
-
-            if (validViolations.length === 0) {
-                // データが不完全な場合の表示
-                violationsContent.innerHTML = `
-                    <div class="alert" style="background: #fff3cd; color: #856404; border: 1px solid #ffeaa7;">
-                        <h4>⚠️ 制約違反データについて</h4>
-                        <p><strong>検出された違反件数:</strong> ${shiftData.violations.length}件</p>
-                        <p><strong>問題:</strong> バックエンドから送られる違反データに以下の情報が不足しています：</p>
-                        <ul>
-                            <li>🔹 スタッフ情報（staff_id が null）</li>
-                            <li>🔹 日付情報（date が null）</li>
-                            <li>🔹 具体的な違反内容（message が空）</li>
-                        </ul>
-                        
-                        <div style="margin-top: 15px; padding: 15px; background: #f8f9fa; border-radius: 5px;">
-                            <strong>現在判明している情報:</strong><br>
-                            <div style="margin: 10px 0;">
-                                ${shiftData.violations.map(v => `• ${v.type === 'RankB' ? '軽微な制約違反' : v.type === 'RankA' ? '重要な制約違反' : v.type}`).join('<br>')}
-                            </div>
-                        </div>
-                        
-                        <p><small><strong>対処方法:</strong> バックエンドの違反検出ロジックで、staff_id、date、messageフィールドを正しく設定する必要があります。</small></p>
-                    </div>
+            const rowsHtml = shiftData.violations.map((v, idx) => {
+                const rank = v.rank || (v.type ? String(v.type).replace('Rank', '') : '-');
+                const ruleId = v.rule_id || v.constraint_name || '-';
+                const staff = v.staff_name || (v.staff_id !== null && v.staff_id !== undefined ? `ID:${v.staff_id}` : '全体');
+                const day = v.date || '-';
+                const detail = v.detail || v.message || '違反内容不明';
+                return `
+                    <tr>
+                        <td>${idx + 1}</td>
+                        <td>${staff}</td>
+                        <td>${rank}</td>
+                        <td>${ruleId}</td>
+                        <td>${day}</td>
+                        <td>${detail}</td>
+                    </tr>
                 `;
-                return;
-            }
+            }).join('');
 
-            // 有効なデータがある場合の通常処理
-            console.log('>>> 有効な違反データが存在するため、詳細表示を開始します');
-            let htmlContent = '<h4>制約違反の詳細</h4>';
-            htmlContent += '<div class="violations-detailed">';
-            
-            // 違反を種類別にグループ化
-            const violationGroups = {};
-            
-            validViolations.forEach((violation, index) => {
-                console.log(`処理中の違反[${index}]:`, violation);
-                
-                // スタッフ名の特定（より柔軟に）
-                let staffName = 'スタッフ不明';
-                const staffFields = ['staff_name', 'name', 'worker_name', 'employee_name', 'user_name'];
-                const idFields = ['staff_id', 'worker_id', 'employee_id', 'user_id', 'id'];
-                
-                // 直接的な名前フィールドを探す
-                for (let field of staffFields) {
-                    if (violation[field]) {
-                        staffName = violation[field];
-                        break;
-                    }
-                }
-                
-                // 名前が見つからない場合、IDからスタッフ名を検索
-                if (staffName === 'スタッフ不明') {
-                    let staffId = null;
-                    for (let field of idFields) {
-                        if (violation[field] !== undefined && violation[field] !== null) {
-                            staffId = violation[field];
-                            break;
-                        }
-                    }
-                    
-                    if (staffId !== null && shiftData.shift_table && shiftData.shift_table.rows) {
-                        const staffRow = shiftData.shift_table.rows.find(row => 
-                            row.staff_id == staffId || row.id == staffId || row.index == staffId
-                        );
-                        if (staffRow) {
-                            staffName = staffRow.staff_name || staffRow.name || `スタッフ${staffId}`;
-                        } else {
-                            staffName = `スタッフID: ${staffId}`;
-                        }
-                    }
-                }
-
-                // 日付の特定（より柔軟に）
-                let targetDate = '日付不明';
-                const dateFields = ['date', 'target_date', 'violation_date', 'day_date'];
-                const dayFields = ['day', 'day_index', 'target_day', 'violation_day'];
-                
-                // 直接的な日付フィールドを探す
-                for (let field of dateFields) {
-                    if (violation[field]) {
-                        targetDate = violation[field];
-                        break;
-                    }
-                }
-                
-                // 日付が見つからない場合、日数から構成
-                if (targetDate === '日付不明') {
-                    let dayNumber = null;
-                    for (let field of dayFields) {
-                        if (violation[field] !== undefined && violation[field] !== null) {
-                            dayNumber = violation[field];
-                            break;
-                        }
-                    }
-                    
-                    if (dayNumber !== null) {
-                        const [year, month] = currentMonth.split('-');
-                        targetDate = `${year}年${month}月${dayNumber}日`;
-                    }
-                }
-
-                // 違反内容の特定（より詳しく）
-                let violationDescription = '制約違反';
-                const descFields = ['constraint_name', 'rule_name', 'violation_type', 'constraint_type', 'message', 'description', 'reason'];
-                
-                // 説明フィールドを探す
-                for (let field of descFields) {
-                    if (violation[field] && violation[field] !== '詳細不明' && violation[field] !== '') {
-                        violationDescription = violation[field];
-                        break;
-                    }
-                }
-                
-                // まだ見つからない場合、typeから推測
-                if (violationDescription === '制約違反' && violation.type) {
-                    const typeMapping = {
-                        'consecutive_night': '連続夜勤制約違反',
-                        'max_shifts_per_month': '月間シフト数制限違反',
-                        'min_rest_days': '最小休日数制約違反',
-                        'holiday_request': '希望休制約違反',
-                        'night_shift_limit': '夜勤回数制限違反',
-                        'rest_after_night': '夜勤後休み制約違反',
-                        'weekend_coverage': '週末カバー制約違反',
-                        'RankB': '軽微な制約違反',
-                        'RankA': '重要な制約違反'
-                    };
-                    violationDescription = typeMapping[violation.type] || violation.type;
-                }
-                
-                console.log(`抽出結果 - スタッフ: "${staffName}", 日付: "${targetDate}", 違反: "${violationDescription}"`);
-
-                const violationKey = `${staffName}_${targetDate}_${violationDescription}`;
-                if (!violationGroups[violationKey]) {
-                    violationGroups[violationKey] = {
-                        staffName,
-                        targetDate,
-                        violationDescription,
-                        count: 0,
-                        details: []
-                    };
-                }
-                violationGroups[violationKey].count++;
-                violationGroups[violationKey].details.push(violation);
-            });
-
-            // グループ化された違反を表示
-            Object.values(violationGroups).forEach(group => {
-                const severity = group.details[0].type === 'RankA' ? 'high' : 'medium';
-                htmlContent += `
-                    <div class="violation-detail-item ${severity}">
-                        <div class="violation-header">
-                            <strong>👤 ${group.staffName}</strong> - 📅 ${group.targetDate}
-                        </div>
-                        <div class="violation-content">
-                            <div class="violation-rule">⚠️ ${group.violationDescription}</div>
-                            ${group.count > 1 ? `<div class="violation-count">同種違反: ${group.count}件</div>` : ''}
-                            ${group.details[0].details ? `<div class="violation-details">詳細: ${group.details[0].details}</div>` : ''}
-                        </div>
-                    </div>
-                `;
-            });
-            
-            htmlContent += '</div>';
-            
-            // スタイルも追加
-            htmlContent += `
-                <style>
-                .violations-detailed {
-                    max-height: 400px;
-                    overflow-y: auto;
-                }
-                .violation-detail-item {
-                    margin-bottom: 15px;
-                    padding: 15px;
-                    border-radius: 8px;
-                    border-left: 4px solid;
-                }
-                .violation-detail-item.high {
-                    background: #fff5f5;
-                    border-left-color: #e53e3e;
-                }
-                .violation-detail-item.medium {
-                    background: #fffaf0;
-                    border-left-color: #dd6b20;
-                }
-                .violation-header {
-                    font-size: 16px;
-                    font-weight: bold;
-                    margin-bottom: 8px;
-                    color: #2d3748;
-                }
-                .violation-content {
-                    font-size: 14px;
-                }
-                .violation-rule {
-                    color: #c53030;
-                    font-weight: 600;
-                    margin-bottom: 4px;
-                }
-                .violation-count {
-                    color: #e53e3e;
-                    font-size: 12px;
-                    font-weight: bold;
-                }
-                .violation-details {
-                    color: #718096;
-                    font-size: 12px;
-                    margin-top: 4px;
-                }
-                </style>
+            violationsContent.innerHTML = `
+                <h4>制約違反の詳細</h4>
+                <div class="shift-table-container">
+                    <table class="statistics-table">
+                        <thead>
+                            <tr>
+                                <th>#</th>
+                                <th>スタッフ</th>
+                                <th>ランク</th>
+                                <th>ルールID</th>
+                                <th>日付</th>
+                                <th>具体的内容</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${rowsHtml}
+                        </tbody>
+                    </table>
+                </div>
             `;
-            
-            violationsContent.innerHTML = htmlContent;
-            console.log('>>> 違反表示HTML生成完了');
         }
 
         // タブ切り替え

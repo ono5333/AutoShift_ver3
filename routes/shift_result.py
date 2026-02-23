@@ -10,17 +10,67 @@ import json
 import csv
 import io
 import sys
-from datetime import datetime, date
+from datetime import datetime
+from typing import Dict, Any
 
 # プロジェクトパスを追加
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from optimizer.solver import ShiftOptimizer
 from utils.shift_display import ShiftDisplayManager
-from utils.yaml_handler import load_project_staff
-from models import ShiftType
+from utils.yaml_handler import (
+    load_project_carryover_for_month
+)
 
 shift_result_bp = Blueprint('shift_result', __name__)
+
+
+def _previous_month_str(month: str) -> str:
+    dt = datetime.strptime(month, "%Y-%m")
+    prev_year = dt.year if dt.month > 1 else dt.year - 1
+    prev_month = dt.month - 1 if dt.month > 1 else 12
+    return f"{prev_year:04d}-{prev_month:02d}"
+
+
+SHIFT_LABELS = {'日', '夜', '明', '休', '希', '有'}
+
+
+def _normalize_prev_month_last_shifts(raw: Any) -> Dict[int, str]:
+    if not isinstance(raw, dict):
+        return {}
+    normalized: Dict[int, str] = {}
+    for k, v in raw.items():
+        try:
+            staff_id = int(k)
+        except (ValueError, TypeError):
+            continue
+        if isinstance(v, str) and v in SHIFT_LABELS:
+            normalized[staff_id] = v
+    return normalized
+
+
+def _expected_history_csv_path(target_month: str) -> str:
+    prev = _previous_month_str(target_month).replace('-', '_')
+    return str(Path("data") / "history" / f"shift_history_{prev}.csv")
+
+
+def _ensure_carryover_for_month(target_month: str) -> Dict[str, Any]:
+    entry = load_project_carryover_for_month(target_month)
+    if not isinstance(entry, dict):
+        return {"ready": False, "source": "none", "night_staff_ids": [], "prev_month_last_shifts": {}}
+
+    last_shifts = _normalize_prev_month_last_shifts(entry.get('prev_month_last_shifts', {}))
+    if last_shifts:
+        night_staff_ids = sorted([sid for sid, s in last_shifts.items() if s == '夜'])
+        return {
+            "ready": True,
+            "source": entry.get('source', 'history_csv'),
+            "night_staff_ids": night_staff_ids,
+            "prev_month_last_shifts": {str(k): v for k, v in sorted(last_shifts.items())}
+        }
+
+    return {"ready": False, "source": "none", "night_staff_ids": [], "prev_month_last_shifts": {}}
+
 
 # ====================
 
@@ -47,10 +97,31 @@ def generate_and_display_shift(month):
                 'status': 'error',
                 'message': '月の形式が正しくありません (YYYY-MM形式で指定してください)'
             }), 400
-        
+
+        carryover_state = _ensure_carryover_for_month(month)
+        if not carryover_state.get("ready"):
+            return jsonify({
+                'status': 'need_carryover',
+                'message': (
+                    f'前月履歴CSVが不足しています。'
+                    f' {_expected_history_csv_path(month)} を用意してください。'
+                ),
+                'data': {
+                    'month': month,
+                    'previous_month': _previous_month_str(month),
+                    'expected_history_csv': _expected_history_csv_path(month)
+                }
+            }), 409
+
         # 最適化実行
-        print(f"🚀 {month} のシフト最適化を開始...")
-        optimizer = ShiftOptimizer(month)
+        print(f"[RUN] {month} のシフト最適化を開始...")
+        optimizer = ShiftOptimizer(
+            month,
+            carryover_override={
+                'night_staff_ids': carryover_state.get('night_staff_ids', []),
+                'prev_month_last_shifts': carryover_state.get('prev_month_last_shifts', {})
+            }
+        )
         result = optimizer.optimize()
 
         # 実行可能解がない場合は、表示データを作らずエラー返却
@@ -81,11 +152,18 @@ def generate_and_display_shift(month):
         # 違反情報
         violations = []
         if result.violations:
+            staff_name_map = {s.id: s.name for s in optimizer.staff_list}
             for violation in result.violations:
+                staff_id = violation.get('staff_id')
                 violations.append({
                     'type': violation.get('type', 'unknown'),
+                    'rank': violation.get('rank') or (str(violation.get('type', '')).replace('Rank', '') if violation.get('type') else None),
+                    'rule_id': violation.get('rule_id') or violation.get('constraint_name'),
+                    'constraint_name': violation.get('constraint_name'),
                     'message': violation.get('message', ''),
+                    'detail': violation.get('detail') or violation.get('message', ''),
                     'staff_id': violation.get('staff_id'),
+                    'staff_name': violation.get('staff_name') or staff_name_map.get(staff_id),
                     'date': violation.get('date')
                 })
         
@@ -103,15 +181,67 @@ def generate_and_display_shift(month):
             }
         }
         
-        print(f"✅ シフト生成・表示データ作成完了: {result.solver_status} ({result.solver_time:.3f}秒)")
+        print(f"[OK] シフト生成・表示データ作成完了: {result.solver_status} ({result.solver_time:.3f}秒)")
         return jsonify(response_data), 200
         
     except Exception as e:
-        print(f"❌ シフト生成・表示エラー: {e}")
+        print(f"[ERROR] シフト生成・表示エラー: {e}")
         return jsonify({
             'status': 'error',
             'message': f'シフト生成に失敗しました: {str(e)}'
         }), 500
+
+
+@shift_result_bp.route('/api/shift/carryover/<month>/status', methods=['GET'])
+def get_carryover_status(month):
+    """前月履歴CSV由来の引継ぎ状況を返す。"""
+    try:
+        datetime.strptime(month, '%Y-%m')
+    except ValueError:
+        return jsonify({
+            'status': 'error',
+            'message': '月の形式が正しくありません (YYYY-MM形式で指定してください)'
+        }), 400
+
+    try:
+        carryover_state = _ensure_carryover_for_month(month)
+        if carryover_state.get("ready"):
+            return jsonify({
+                'status': 'success',
+                'data': {
+                    'month': month,
+                    'previous_month': _previous_month_str(month),
+                    'source': carryover_state.get('source', 'history_csv'),
+                    'prev_month_last_shifts': carryover_state.get('prev_month_last_shifts', {})
+                }
+            }), 200
+
+        return jsonify({
+            'status': 'error',
+            'message': (
+                f'前月履歴CSVが不足しています。'
+                f' {_expected_history_csv_path(month)} を用意してください。'
+            ),
+            'data': {
+                'month': month,
+                'previous_month': _previous_month_str(month),
+                'expected_history_csv': _expected_history_csv_path(month)
+            }
+        }), 404
+    except Exception as e:
+        return jsonify({
+            'status': 'error',
+            'message': f'引継ぎ状況取得に失敗しました: {str(e)}'
+        }), 500
+
+
+@shift_result_bp.route('/api/shift/carryover/<month>', methods=['POST'])
+def save_carryover_status(month):
+    """CSV運用への切替により、手入力保存APIは非推奨。"""
+    return jsonify({
+        'status': 'error',
+        'message': 'carryover手入力は廃止しました。前月履歴CSVを data/history に配置してください。'
+    }), 410
 
 @shift_result_bp.route('/api/shift/display/table/<month>', methods=['GET'])
 def get_shift_table_data(month):

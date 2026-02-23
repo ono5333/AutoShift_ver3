@@ -130,6 +130,31 @@ facility_rules:
   max_count: 7
   rank: A
   title: 夜勤回数の月間上限
+- constraint_type: no_day_after_night_off
+  description: 夜勤明け[明]の後に日勤[日]は入れない
+  id: FR024
+  rank: A
+  title: 明け後の日勤禁止
+- constraint_type: night_shift_priority_reduction
+  description: 夜勤均等化時に、近藤由香利＜ソー＝田中賢輝＜その他スタッフの順で夜勤を少なくする
+  id: FR025
+  rank: B
+  weight: 1
+  high_priority_staff_ids:
+  - 4
+  medium_priority_staff_ids:
+  - 9
+  - 10
+  high_priority_penalty: 3
+  medium_priority_penalty: 2
+  other_penalty: 1
+  title: 夜勤優先抑制
+- constraint_type: max_consecutive_equivalent_work_days
+  description: 夜[夜]と明け[明]を連勤として扱い、日[日]/夜[夜]/明[明]の6連勤相当を禁止する
+  id: FR026
+  max_equivalent_days: 5
+  rank: B
+  title: 6連勤相当禁止
 personal_rules:
 - constraint_type: no_night_shift
   description: 夜勤に入ることはできない
