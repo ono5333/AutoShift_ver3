@@ -351,26 +351,105 @@ def export_shift_data(month, format):
             )
         
         elif format.lower() == 'excel':
-            # Excel生成 (pandas使用)
+            # Excel生成（CSVと同じレイアウト + 曜日列の色分け）
             try:
-                import pandas as pd
-                import openpyxl  # noqa: F401
-                
-                shift_table = display.generate_shift_table_data(result, optimizer.staff_list, optimizer.dates)
-                
-                # DataFrameに変換
-                df = pd.DataFrame(shift_table['rows'])
-                
+                import openpyxl
+                from openpyxl.styles import PatternFill, Alignment, Font
+                import re
+
+                # まずCSVと同じ表データを作る
+                csv_path = display.export_to_csv(result, optimizer.staff_list, optimizer.dates)
+                with open(csv_path, 'r', encoding='utf-8-sig', newline='') as f:
+                    csv_rows = list(csv.reader(f))
+
+                wb = openpyxl.Workbook()
+                ws = wb.active
+                ws.title = 'シフト表'
+
+                for row in csv_rows:
+                    ws.append(row)
+
+                # 共通スタイル
+                center = Alignment(horizontal='center', vertical='center')
+                for row in ws.iter_rows(min_row=1, max_row=ws.max_row, min_col=1, max_col=ws.max_column):
+                    for cell in row:
+                        cell.alignment = center
+
+                header_fill = PatternFill(fill_type='solid', fgColor='F2F2F2')
+                for c in range(1, ws.max_column + 1):
+                    ws.cell(row=1, column=c).font = Font(bold=True)
+                    ws.cell(row=1, column=c).fill = header_fill
+
+                # スタッフ行範囲（ヘッダー1行 + スタッフN行）
+                staff_row_start = 2
+                staff_row_end = 1 + len(optimizer.staff_list)
+
+                # ID/スタッフ名/職種の背景色（フロントエンドに合わせる）
+                default_staff_fill = PatternFill(fill_type='solid', fgColor='F8F9FA')
+                junior_fill = PatternFill(fill_type='solid', fgColor='FFF9DB')  # 初級介護士
+                bath_fill = PatternFill(fill_type='solid', fgColor='EAF7EA')    # お風呂
+                for row_idx, staff in enumerate(optimizer.staff_list, start=staff_row_start):
+                    if staff.staff_class == '初級介護士':
+                        fill = junior_fill
+                    elif staff.staff_class == 'お風呂':
+                        fill = bath_fill
+                    else:
+                        fill = default_staff_fill
+                    for col_idx in (1, 2, 3):  # A,B,C列
+                        ws.cell(row=row_idx, column=col_idx).fill = fill
+
+                # 列幅
+                ws.column_dimensions['A'].width = 10
+                ws.column_dimensions['B'].width = 16
+                ws.column_dimensions['C'].width = 12
+                for c in range(4, ws.max_column + 1):
+                    ws.column_dimensions[openpyxl.utils.get_column_letter(c)].width = 9
+
+                # 土日列を着色（ヘッダーが MM/DD(曜) でも MM/DD でも対応）
+                sat_fill = PatternFill(fill_type='solid', fgColor='E6F4FF')
+                sun_fill = PatternFill(fill_type='solid', fgColor='FFECEC')
+                year = int(month.split('-')[0])
+                for c in range(4, ws.max_column + 1):
+                    raw = str(ws.cell(row=1, column=c).value or '').strip()
+                    m = re.match(r'^(\d{2})/(\d{2})', raw)
+                    if not m:
+                        continue
+                    mm = int(m.group(1))
+                    dd = int(m.group(2))
+                    try:
+                        wd = datetime(year, mm, dd).weekday()
+                    except Exception:
+                        continue
+                    fill = sat_fill if wd == 5 else (sun_fill if wd == 6 else None)
+                    if fill:
+                        # 合計系セルには土日色を付けない（スタッフ行まで）
+                        for r in range(1, staff_row_end + 1):
+                            ws.cell(row=r, column=c).fill = fill
+
+                # 統計シート
+                stats = display.generate_statistics_data(result, optimizer.staff_list, optimizer.dates)
+                ws2 = wb.create_sheet('統計')
+                ws2.append(['スタッフ名', '職種', '日勤', '夜勤', '明け', '公休', '有給', '希望休', '勤務日数', '勤務率(%)'])
+                for s in stats.get('staff_stats', []):
+                    ws2.append([
+                        s.get('staff_name', ''),
+                        s.get('staff_class', ''),
+                        s.get('day_shifts', 0),
+                        s.get('night_shifts', 0),
+                        s.get('night_off_shifts', 0),
+                        s.get('holiday_shifts', 0),
+                        s.get('paid_holidays', 0),
+                        s.get('request_holidays', 0),
+                        s.get('work_days', 0),
+                        s.get('work_ratio', 0),
+                    ])
+                for c in range(1, 11):
+                    ws2.cell(row=1, column=c).font = Font(bold=True)
+                    ws2.cell(row=1, column=c).fill = header_fill
+
                 # Excel書き出し
                 excel_buffer = io.BytesIO()
-                with pd.ExcelWriter(excel_buffer, engine='openpyxl') as writer:
-                    df.to_excel(writer, sheet_name='シフト表', index=False)
-                    
-                    # 統計シートも追加
-                    stats = display.generate_statistics_data(result, optimizer.staff_list, optimizer.dates)
-                    stats_df = pd.DataFrame(stats['staff_stats'])
-                    stats_df.to_excel(writer, sheet_name='統計', index=False)
-                
+                wb.save(excel_buffer)
                 excel_buffer.seek(0)
                 
                 return send_file(

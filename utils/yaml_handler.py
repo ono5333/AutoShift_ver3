@@ -397,9 +397,13 @@ def load_project_carryover_for_month(month: str) -> Dict[str, Any]:
             return {}
 
         header = rows[0]
-        try:
-            last_col_idx = header.index(last_day_header)
-        except ValueError:
+        last_col_idx = None
+        for i, col in enumerate(header):
+            col_str = str(col or '').strip()
+            if col_str.startswith(last_day_header):
+                last_col_idx = i
+                break
+        if last_col_idx is None:
             return {}
 
         prev_month_last_shifts: Dict[str, str] = {}

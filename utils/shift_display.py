@@ -231,8 +231,12 @@ class ShiftDisplayManager:
             filename = f"autoshift_result_{month_str}.csv"
             
         # === 1. ヘッダー作成 ===
-        # 日付列
-        date_headers = [target_date.strftime('%m/%d') for target_date in dates]
+        # 日付列（曜日付き）
+        jp_weekdays = ['月', '火', '水', '木', '金', '土', '日']
+        date_headers = [
+            f"{target_date.strftime('%m/%d')}({jp_weekdays[target_date.weekday()]})"
+            for target_date in dates
+        ]
         # 統計列
         stat_headers = ['日勤回数', '夜勤回数', '夜勤明け回数', '公休回数', '有給回数', '希望休回数', '総勤務日数']
         # 全ヘッダー
