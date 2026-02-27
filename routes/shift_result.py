@@ -155,6 +155,8 @@ def generate_and_display_shift(month):
             staff_name_map = {s.id: s.name for s in optimizer.staff_list}
             for violation in result.violations:
                 staff_id = violation.get('staff_id')
+                if not isinstance(staff_id, int):
+                    staff_id = None
                 violations.append({
                     'type': violation.get('type', 'unknown'),
                     'rank': violation.get('rank') or (str(violation.get('type', '')).replace('Rank', '') if violation.get('type') else None),
@@ -163,7 +165,7 @@ def generate_and_display_shift(month):
                     'message': violation.get('message', ''),
                     'detail': violation.get('detail') or violation.get('message', ''),
                     'staff_id': violation.get('staff_id'),
-                    'staff_name': violation.get('staff_name') or staff_name_map.get(staff_id),
+                    'staff_name': violation.get('staff_name') or (staff_name_map.get(staff_id) if staff_id is not None else None),
                     'date': violation.get('date')
                 })
         
@@ -354,6 +356,7 @@ def export_shift_data(month, format):
             # Excel生成（CSVと同じレイアウト + 曜日列の色分け）
             try:
                 import openpyxl
+                from openpyxl.utils import get_column_letter
                 from openpyxl.styles import PatternFill, Alignment, Font
                 import re
 
@@ -364,6 +367,8 @@ def export_shift_data(month, format):
 
                 wb = openpyxl.Workbook()
                 ws = wb.active
+                if ws is None:
+                    raise ValueError('Excelワークシートの初期化に失敗しました')
                 ws.title = 'シフト表'
 
                 for row in csv_rows:
@@ -403,7 +408,7 @@ def export_shift_data(month, format):
                 ws.column_dimensions['B'].width = 16
                 ws.column_dimensions['C'].width = 12
                 for c in range(4, ws.max_column + 1):
-                    ws.column_dimensions[openpyxl.utils.get_column_letter(c)].width = 9
+                    ws.column_dimensions[get_column_letter(c)].width = 9
 
                 # 土日列を着色（ヘッダーが MM/DD(曜) でも MM/DD でも対応）
                 sat_fill = PatternFill(fill_type='solid', fgColor='E6F4FF')
