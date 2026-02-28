@@ -767,9 +767,14 @@
                 if (localShiftData) {
                     try {
                         shiftData = JSON.parse(localShiftData);
-                        displayShiftData();
-                        showAlert('info', 'タブ切り替え前に生成したシフトデータを復元しました');
-                        return;
+                        if (isDisplayableShiftData(shiftData)) {
+                            displayShiftData();
+                            showAlert('info', 'タブ切り替え前に生成したシフトデータを復元しました');
+                            return;
+                        }
+                        // 旧形式データは破棄してサーバー取得へフォールバック
+                        localStorage.removeItem(localShiftKey);
+                        shiftData = null;
                     } catch (e) {
                         console.warn('localStorage復元に失敗しました:', e);
                         localStorage.removeItem(localShiftKey);
@@ -781,9 +786,15 @@
                 const result = await response.json();
                 
                 if (result.status === 'success' && result.data) {
-                    shiftData = result.data;
-                    displayShiftData();
-                    showAlert('info', '既存の保存済みシフトデータを読み込みました');
+                    if (isDisplayableShiftData(result.data)) {
+                        shiftData = result.data;
+                        displayShiftData();
+                        showAlert('info', '既存の保存済みシフトデータを読み込みました');
+                    } else {
+                        shiftData = null;
+                        clearShiftData();
+                        showAlert('info', '保存済みデータは旧形式のため表示できません。シフトを再生成してください。');
+                    }
                 } else if (result.status === 'no_data') {
                     // データがない場合は何も表示しない
                     shiftData = null;
@@ -858,13 +869,38 @@
                     
                     showAlert('success', result.message);
                 } else {
-                    showAlert('error', result.message || 'シフト生成に失敗しました');
+                    shiftData = null;
+                    clearShiftData();
+                    const diagnosisMessage = buildDiagnosisMessage(result?.data?.diagnosis);
+                    const baseMessage = result.message || 'シフト生成に失敗しました';
+                    showAlert('error', diagnosisMessage ? `${baseMessage}\n${diagnosisMessage}` : baseMessage);
                 }
             } catch (error) {
                 showAlert('error', `エラーが発生しました: ${error.message}`);
             } finally {
                 showLoading(false);
             }
+        }
+
+        function isDisplayableShiftData(data) {
+            return !!(data && data.shift_table && data.shift_table.rows);
+        }
+
+        function buildDiagnosisMessage(diagnosis) {
+            if (!diagnosis || diagnosis.available === false) {
+                return '';
+            }
+            const single = Array.isArray(diagnosis.single_rule_relaxations) ? diagnosis.single_rule_relaxations : [];
+            const pair = Array.isArray(diagnosis.pair_rule_relaxations) ? diagnosis.pair_rule_relaxations : [];
+            if (single.length > 0) {
+                const top = single.slice(0, 3).map(item => (item.disabled || []).join(' + '));
+                return `診断候補(単体): ${top.join(' / ')}`;
+            }
+            if (pair.length > 0) {
+                const top = pair.slice(0, 3).map(item => (item.disabled || []).join(' + '));
+                return `診断候補(組合せ): ${top.join(' / ')}`;
+            }
+            return '診断: 単体緩和で解消せず、複数制約の競合が疑われます。';
         }
 
         async function ensureCarryoverReady() {
@@ -1051,7 +1087,7 @@
             }
             
             if (!shiftData.shift_table) {
-                console.error('❌ shift_tableがありません');
+                console.warn('⚠️ shift_tableがありません');
                 gridContainer.innerHTML = '<div class="shift-grid-item">シフト表データが生成されていません</div>';
                 return;
             }

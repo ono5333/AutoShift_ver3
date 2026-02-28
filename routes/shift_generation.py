@@ -43,7 +43,7 @@ def generate_shift():
         data = request.json or {}
         month = data.get('month', '2026-02')
         
-        print(f"🚀 シフト生成開始: {month}")
+        # print(f"シフト生成開始: {month}")
         
         # 1. 最適化実行
         optimizer = ShiftOptimizer(month)
@@ -61,7 +61,10 @@ def generate_shift():
                 'data': {
                     'month': month,
                     'solver_status': result.solver_status,
-                    'solver_time': round(result.solver_time, 4)
+                    'solver_status_code': result.solver_status_code,
+                    'solver_status_name': result.solver_status_name,
+                    'solver_time': round(result.solver_time, 4),
+                    'diagnosis': result.diagnosis
                 }
             }), 422
         
@@ -86,6 +89,8 @@ def generate_shift():
             'data': {
                 'month': month,
                 'solver_status': result.solver_status,
+                'solver_status_code': result.solver_status_code,
+                'solver_status_name': result.solver_status_name,
                 'solver_time': round(result.solver_time, 4),
                 'shifts': shift_dict,
                 'violations': result.violations,
@@ -94,11 +99,11 @@ def generate_shift():
             }
         }
         
-        print(f"✅ シフト生成完了: {result.solver_status} ({result.solver_time:.3f}秒)")
+        # print(f"シフト生成完了: {result.solver_status} ({result.solver_time:.3f}秒)")
         return jsonify(response_data), 200
         
     except Exception as e:
-        print(f"❌ シフト生成エラー: {e}")
+        # print(f"シフト生成エラー: {e}")
         return jsonify({
             'status': 'error',
             'message': f'シフト生成に失敗しました: {str(e)}'
@@ -167,7 +172,10 @@ def display_shift_table(month):
                 'data': {
                     'month': month,
                     'solver_status': result.solver_status,
-                    'solver_time': round(result.solver_time, 4)
+                    'solver_status_code': result.solver_status_code,
+                    'solver_status_name': result.solver_status_name,
+                    'solver_time': round(result.solver_time, 4),
+                    'diagnosis': result.diagnosis
                 }
             }), 422
         
@@ -185,6 +193,8 @@ def display_shift_table(month):
                 'month': month,
                 'solver_info': {
                     'status': result.solver_status,
+                    'status_code': result.solver_status_code,
+                    'status_name': result.solver_status_name,
                     'time': round(result.solver_time, 4),
                     'violations_count': len(result.violations)
                 },
@@ -363,5 +373,5 @@ def _save_result(month: str, result, optimizer) -> str:
         return str(filepath)
         
     except Exception as e:
-        print(f"⚠️ 結果保存エラー: {e}")
+        # print(f"結果保存エラー: {e}")
         return f"保存失敗: {e}"

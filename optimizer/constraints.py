@@ -26,7 +26,8 @@ class ConstraintManager:
     """
     
     def __init__(self, model: cp_model.CpModel, shift: Dict, staff_list: List[Staff], 
-                 rules: Dict, request_holidays: Dict, dates: List[date], carryover: Optional[Dict[str, Any]] = None):
+                 rules: Dict, request_holidays: Dict, dates: List[date], carryover: Optional[Dict[str, Any]] = None,
+                 disabled_constraints: Optional[List[str]] = None):
         """
         初期化
         
@@ -45,6 +46,7 @@ class ConstraintManager:
         self.request_holidays = request_holidays
         self.dates = dates
         self.carryover = carryover or {}
+        self.disabled_constraints = {str(item) for item in (disabled_constraints or [])}
         
         # スタッフID→Staffオブジェクトのマッピング
         self.staff_by_id = {staff.id: staff for staff in staff_list}
@@ -62,69 +64,88 @@ class ConstraintManager:
         self._holiday_cache: Dict[int, set] = {}
         self._rank_var_seq = 0
         
-        print(f"🔗 制約マネージャー初期化完了")
+        # noisy log removed
         
     def add_facility_constraints(self) -> None:
         """施設ルール制約（FR001-FR016）の追加（簡易版）"""
-        print("   📋 施設ルール制約追加中...")
+        # noisy log removed
         
         try:
             # 前月末引継ぎ制約（最優先）
-            self._add_month_end_carryover_constraints()
+            if self._is_constraint_enabled("CARRYOVER"):
+                self._add_month_end_carryover_constraints()
 
             # FR001: 夜勤は毎日2名配置 (ランクA)  
-            self._add_fr001_night_shift_daily_2_staff()
+            if self._is_constraint_enabled("FR001"):
+                self._add_fr001_night_shift_daily_2_staff()
 
             # FR023: スタッフ夜勤回数の月上限 (ランクA)
-            self._add_fr023_global_max_night_shifts()
+            if self._is_constraint_enabled("FR023"):
+                self._add_fr023_global_max_night_shifts()
             
             # FR002: 日勤は毎日3名以上配置 (ランクA)
-            self._add_fr002_day_shift_daily_3_staff()
+            if self._is_constraint_enabled("FR002"):
+                self._add_fr002_day_shift_daily_3_staff()
             
             # FR003: 月木のお風呂配置 (ランクA)
-            self._add_fr003_bath_staff_mon_thu()
+            if self._is_constraint_enabled("FR003"):
+                self._add_fr003_bath_staff_mon_thu()
             
             # FR008: 希望休申請上限 (ランクA)
-            self._add_fr008_request_holiday_limit()
+            if self._is_constraint_enabled("FR008"):
+                self._add_fr008_request_holiday_limit()
             
             # FR011: 日勤に介護士配置 (ランクA)
-            self._add_fr011_caregiver_in_day_shift()
+            if self._is_constraint_enabled("FR011"):
+                self._add_fr011_caregiver_in_day_shift()
             
             # FR012: 夜勤明けは必須 (ランクA)
-            self._add_fr012_night_shift_off_required()
+            if self._is_constraint_enabled("FR012"):
+                self._add_fr012_night_shift_off_required()
 
             # FR022: 夜→明 サイクル連続上限 (ランクA)
-            self._add_fr022_max_consecutive_night_off_cycles()
+            if self._is_constraint_enabled("FR022"):
+                self._add_fr022_max_consecutive_night_off_cycles()
             
             # FR013: 連続勤務の上限 (ランクA)
-            self._add_fr013_max_consecutive_days()
+            if self._is_constraint_enabled("FR013"):
+                self._add_fr013_max_consecutive_days()
 
             # FR026: 6連勤相当の禁止 (ランクB)
-            self._add_fr026_max_consecutive_equivalent_work_days()
+            if self._is_constraint_enabled("FR026"):
+                self._add_fr026_max_consecutive_equivalent_work_days()
             
             # FR004-FR007: 月別公休 (ランクA)
-            self._add_fr004_to_fr007_monthly_holidays()
+            if self._is_constraint_enabled("FR004_TO_FR007"):
+                self._add_fr004_to_fr007_monthly_holidays()
             
             # FR015: 勤務日数の計算 (ランクB)
-            self._add_fr015_work_days_calculation()
+            if self._is_constraint_enabled("FR015"):
+                self._add_fr015_work_days_calculation()
             
             # FR017: 公休の前後配置最適化 (ランクC)
-            self._add_fr017_holiday_adjacent_optimization()
+            if self._is_constraint_enabled("FR017"):
+                self._add_fr017_holiday_adjacent_optimization()
 
             # FR020: 日勤人数の平準化 (ランクC)
-            self._add_fr020_day_shift_balance_optimization()
+            if self._is_constraint_enabled("FR020"):
+                self._add_fr020_day_shift_balance_optimization()
 
             # FR021: 夜勤回数の平準化 (ランクC)
-            self._add_fr021_night_shift_balance_optimization()
+            if self._is_constraint_enabled("FR021"):
+                self._add_fr021_night_shift_balance_optimization()
             
             # FR018: 連休制限&2連休促進 (ランクB)
-            self._add_fr018_max_consecutive_holidays()
+            if self._is_constraint_enabled("FR018"):
+                self._add_fr018_max_consecutive_holidays()
 
             # FR024: 夜→明の後の日勤禁止 (ランクB)
-            self._add_fr024_no_day_after_night_off()
+            if self._is_constraint_enabled("FR024"):
+                self._add_fr024_no_day_after_night_off()
 
             # FR025: 夜勤優先抑制（ランクB）
-            self._add_fr025_night_shift_priority_reduction()
+            if self._is_constraint_enabled("FR025"):
+                self._add_fr025_night_shift_priority_reduction()
             
             # 複雑な制約は一時的にスキップ（型不整合エラー修正まで）
             # TODO: FR014,FR016を修正後に再有効化
@@ -132,7 +153,7 @@ class ConstraintManager:
             # - FR016: 介護士の勤務日数平均化 (ランクC) - 型不整合修正が必要
             # - FR005: 2月限定実装（FR004-FR007統合版に置換済み）
             
-            print(f"   ✅ 施設ルール制約 11個 追加完了（安定版）")
+            # noisy log removed
             
         except Exception as e:
             raise Exception(f"施設ルール制約追加エラー: {e}")
@@ -231,7 +252,7 @@ class ConstraintManager:
         if max_count < 0:
             return
 
-        print(f"      - FR023: 夜勤回数は月{max_count}回まで")
+        # noisy log removed
 
         for staff in self.staff_list:
             night_shift_bool_vars = []
@@ -580,7 +601,7 @@ class ConstraintManager:
         if max_cycles < 1:
             return
 
-        print(f"      - FR022: 夜→明 サイクル連続上限{max_cycles}回")
+        # noisy log removed
 
         # 上限を超える(max_cycles + 1)サイクルの連続パターンを禁止する
         pattern_len = 2 * (max_cycles + 1)
@@ -814,9 +835,11 @@ class ConstraintManager:
                 
     def add_personal_constraints(self) -> None:
         """個人ルール制約（PR001-PR010）の追加"""
-        print("   👤 個人ルール制約追加中...")
+        # noisy log removed
         
         try:
+            if not self._is_constraint_enabled("PERSONAL_ALL"):
+                return
             personal_rules = self.rules.get('personal_rules', [])
             implemented_count = 0
             
@@ -830,25 +853,27 @@ class ConstraintManager:
                 
                 if not all([rule_id, constraint_type, staff_id]):
                     continue
+                if not self._is_constraint_enabled(str(rule_id)):
+                    continue
                     
                 if constraint_type == 'no_night_shift':
                     # PR001-PR004: 夜勤不可
                     self._add_no_night_shift_constraint(staff_id, rule_id, rank, rule_weight)
                     implemented_count += 1
-                    print(f"      - {rule_id}: {staff_name} 夜勤不可 (Rank {rank})")
+                    # noisy log removed
                     
                 elif constraint_type == 'max_night_shifts':
                     # PR006-PR008: 夜勤回数上限
                     max_count = rule.get('max_count', 5)
                     self._add_max_night_shifts_constraint(staff_id, max_count, rule_id, rank, rule_weight)
                     implemented_count += 1
-                    print(f"      - {rule_id}: {staff_name} 夜勤回数上限{max_count}回 (Rank {rank})")
+                    # noisy log removed
                     
                 elif constraint_type == 'day_off_after_night_shift':
                     # PR009: 夜勤明けは公休
                     self._add_day_off_after_night_shift_constraint(staff_id, rule_id, rank, rule_weight)
                     implemented_count += 1
-                    print(f"      - {rule_id}: {staff_name} 夜勤明けは公休 (Rank {rank})")
+                    # noisy log removed
                     
                 elif constraint_type == 'fixed_day_off':
                     # PR005: 固定休日
@@ -857,25 +882,25 @@ class ConstraintManager:
                     implemented_count += 1
                     weekdays = ['日', '月', '火', '水', '木', '金', '土']
                     day_name = weekdays[day_of_week] if 0 <= day_of_week <= 6 else '不明'
-                    print(f"      - {rule_id}: {staff_name} {day_name}曜日固定休 (Rank {rank})")
+                    # noisy log removed
 
                 elif constraint_type == 'fixed_public_holiday_off':
                     # 恒久休み: 勤務系シフトは不可、休暇系シフトのみ許可
                     self._add_fixed_public_holiday_off_constraint(staff_id, rule_id, rank, rule_weight)
                     implemented_count += 1
-                    print(f"      - {rule_id}: {staff_name} 祝日休み固定 (Rank {rank})")
+                    # noisy log removed
 
                 elif constraint_type == 'max_consecutive_day_shifts':
                     # 日勤連続上限（ランクB）
                     max_count = rule.get('max_count', 2)
                     self._add_max_consecutive_day_shifts_constraint(staff_id, max_count, rule_id, rank, rule_weight)
                     implemented_count += 1
-                    print(f"      - {rule_id}: {staff_name} 日勤連続上限{max_count}日 (Rank {rank})")
+                    # noisy log removed
                 
                 # 複雑な制約は一時的にスキップ
                 # TODO: 段階的に追加
                     
-            print(f"   ✅ 個人ルール制約 {implemented_count}個 追加完了")
+            # noisy log removed
             
         except Exception as e:
             raise Exception(f"個人ルール制約追加エラー: {e}")
@@ -1135,9 +1160,11 @@ class ConstraintManager:
                 
     def add_relationship_constraints(self) -> None:
         """人間関係ルール制約（RR001）の追加"""
-        print("   👥 人間関係ルール制約追加中...")
+        # noisy log removed
         
         try:
+            if not self._is_constraint_enabled("RELATIONSHIP_ALL"):
+                return
             relationship_rules = self.rules.get('relationship_rules', [])
             implemented_count = 0
             
@@ -1151,6 +1178,8 @@ class ConstraintManager:
                 
                 if not all([rule_id, constraint_type, staff_ids]) or len(staff_ids) != 2:
                     continue
+                if not self._is_constraint_enabled(str(rule_id)):
+                    continue
                 
                 staff_id1, staff_id2 = staff_ids[0], staff_ids[1]
                 
@@ -1162,9 +1191,9 @@ class ConstraintManager:
                     implemented_count += 1
                     staff1_name = rule.get('staff_names', [f'スタッフ{staff_id1}', f'スタッフ{staff_id2}'])[0]
                     staff2_name = rule.get('staff_names', [f'スタッフ{staff_id1}', f'スタッフ{staff_id2}'])[1]
-                    print(f"      - {rule_id}: {staff1_name} & {staff2_name} 同日夜勤不可 (Rank {rank})")
+                    # noisy log removed
                         
-            print(f"   ✅ 人間関係ルール制約 {implemented_count}個 追加完了")
+            # noisy log removed
             
         except Exception as e:
             raise Exception(f"人間関係ルール制約追加エラー: {e}")
@@ -1200,12 +1229,13 @@ class ConstraintManager:
             
     def add_request_holiday_constraints(self) -> None:
         """希望休み制約の追加 - 厳密実装"""
-        print("   📅 希望休み制約追加中...")
+        # noisy log removed
         
         try:
+            if not self._is_constraint_enabled("REQUEST_HOLIDAYS"):
+                return
             staff_requests = self.request_holidays.get('staff_requests', [])
             request_count = 0
-            applied_requests = []
             paid_request_dates_by_staff: Dict[int, set] = {}
             
             for staff_req in staff_requests:
@@ -1218,14 +1248,14 @@ class ConstraintManager:
                     request_type = request.get('type')
                     
                     if not all([request_date_str, request_type, staff_id]):
-                        print(f"      ⚠️ 不完全な希望休データ: {staff_name} - {request}")
+                        # noisy log removed
                         continue
                         
                     # 日付解析
                     try:
                         request_date = datetime.strptime(request_date_str, '%Y-%m-%d').date()
                     except ValueError as e:
-                        print(f"      ❌ 日付解析エラー: {request_date_str} - {e}")
+                        # noisy log removed
                         continue
                     
                     if request_date in self.dates and (staff_id, request_date) in self.shift:
@@ -1249,13 +1279,10 @@ class ConstraintManager:
                             # 公休指定（ランクA制約 - 絶対遵守）
                             self.model.Add(self.shift[(staff_id, request_date)] == ShiftType.PUBLIC_HOLIDAY.value)
                         else:
-                            print(f"      ⚠️ 不明な希望休タイプ: {request_type}")
+                            # noisy log removed
                             continue
                         
                         request_count += 1
-                        applied_requests.append(f"{staff_name} {request_date.strftime('%m/%d')} [{request_type}]")
-                    else:
-                        print(f"      ⚠️ 対象外日付: {staff_name} - {request_date}")
 
             # 有給は申請された日付以外には割り当てない
             for staff in self.staff_list:
@@ -1264,9 +1291,7 @@ class ConstraintManager:
                     if target_date not in requested_paid_dates:
                         self.model.Add(self.shift[(staff.id, target_date)] != ShiftType.PAID_HOLIDAY.value)
                         
-            print(f"   ✅ 希望休み制約 {request_count}件 追加完了:")
-            for req in applied_requests:
-                print(f"      - {req}")
+            # noisy log removed
             
         except Exception as e:
             raise Exception(f"希望休み制約追加エラー: {e}")
@@ -1348,6 +1373,9 @@ class ConstraintManager:
             if constraint_type and rule.get('constraint_type') == constraint_type:
                 return rule
         return None
+
+    def _is_constraint_enabled(self, key: str) -> bool:
+        return key not in self.disabled_constraints
 
     @staticmethod
     def _get_rule_weight(rule: Optional[Dict[str, Any]], default: int = 1) -> int:
@@ -1438,7 +1466,7 @@ class ConstraintManager:
         """FR017: 公休の前後配置最適化 (ランクC)"""
         rule = self._get_facility_rule("FR017", "holiday_adjacent_optimization")
         weight = self._get_rule_weight(rule, 1)
-        print("      - FR017: 公休の前後配置最適化")
+        # noisy log removed
         
         for staff in self.staff_list:
             for i, target_date in enumerate(self.dates):
@@ -1507,7 +1535,7 @@ class ConstraintManager:
         rule = self._get_facility_rule("FR018", "max_consecutive_rest_days")
         rank = self._normalize_rank(rule.get('rank', 'B') if rule else 'B')
         weight = self._get_rule_weight(rule, 1)
-        print("      - FR018: 連休制限と2連休促進")
+        # noisy log removed
         
         for staff in self.staff_list:
             # 3連休以上の禁止（ランクB制約）
@@ -1566,7 +1594,7 @@ class ConstraintManager:
         if fr020_rule is None:
             return
 
-        print("      - FR020: 日勤人数の平準化")
+        # noisy log removed
         weight = int(fr020_rule.get('weight', 10))
         target_classes = set(fr020_rule.get('target_classes', ['介護士', '初級介護士']))
         target_staff = [s for s in self.staff_list if s.staff_class in target_classes]
@@ -1616,7 +1644,7 @@ class ConstraintManager:
         if fr021_rule is None:
             return
 
-        print("      - FR021: 夜勤回数の平準化")
+        # noisy log removed
         weight = int(fr021_rule.get('weight', 10))
 
         # 夜勤不可(PR no_night_shift)スタッフを対象外にする
@@ -1665,7 +1693,7 @@ class ConstraintManager:
 
         rank = self._normalize_rank(rule.get('rank', 'B'))
         weight = self._get_rule_weight(rule, 1)
-        print("      - FR024: 明けの後の日勤禁止")
+        # noisy log removed
 
         if len(self.dates) < 2:
             return
@@ -1708,7 +1736,7 @@ class ConstraintManager:
         medium_penalty = max(1, int(rule.get('medium_priority_penalty', 2)))
         other_penalty = max(1, int(rule.get('other_penalty', 1)))
 
-        print("      - FR025: 夜勤優先抑制")
+        # noisy log removed
 
         for staff in self.staff_list:
             if staff.id in high_ids:
@@ -1753,7 +1781,7 @@ class ConstraintManager:
         if len(self.dates) < window_size:
             return
 
-        print(f"      - FR026: {window_size}連勤相当禁止（日/夜/明ベース）")
+        # noisy log removed
 
         for staff in self.staff_list:
             for i in range(len(self.dates) - window_size + 1):

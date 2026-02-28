@@ -114,7 +114,7 @@ def generate_and_display_shift(month):
             }), 409
 
         # 最適化実行
-        print(f"[RUN] {month} のシフト最適化を開始...")
+        # print(f"[RUN] {month} のシフト最適化を開始...")
         optimizer = ShiftOptimizer(
             month,
             carryover_override={
@@ -136,7 +136,10 @@ def generate_and_display_shift(month):
                 'data': {
                     'month': month,
                     'solver_status': result.solver_status,
-                    'solver_time': round(result.solver_time, 4)
+                    'solver_status_code': result.solver_status_code,
+                    'solver_status_name': result.solver_status_name,
+                    'solver_time': round(result.solver_time, 4),
+                    'diagnosis': result.diagnosis
                 }
             }), 422
         
@@ -175,6 +178,8 @@ def generate_and_display_shift(month):
             'data': {
                 'month': month,
                 'solver_status': result.solver_status,
+                'solver_status_code': result.solver_status_code,
+                'solver_status_name': result.solver_status_name,
                 'solver_time': round(result.solver_time, 4),
                 'shift_table': shift_table,
                 'statistics': statistics,
@@ -183,11 +188,11 @@ def generate_and_display_shift(month):
             }
         }
         
-        print(f"[OK] シフト生成・表示データ作成完了: {result.solver_status} ({result.solver_time:.3f}秒)")
+        # print(f"[OK] シフト生成・表示データ作成完了: {result.solver_status} ({result.solver_time:.3f}秒)")
         return jsonify(response_data), 200
         
     except Exception as e:
-        print(f"[ERROR] シフト生成・表示エラー: {e}")
+        # print(f"[ERROR] シフト生成・表示エラー: {e}")
         return jsonify({
             'status': 'error',
             'message': f'シフト生成に失敗しました: {str(e)}'

@@ -15,6 +15,8 @@ import calendar
 import time
 import sys
 from pathlib import Path
+from itertools import combinations
+import config
 
 # プロジェクトルートからインポート（修正版）
 sys.path.append(str(Path(__file__).parent.parent))
@@ -40,7 +42,13 @@ class ShiftOptimizer:
     - 違反情報の詳細レポート
     """
     
-    def __init__(self, month_year: str = "2026-02", carryover_override: Optional[Dict[str, Any]] = None):
+    def __init__(
+        self,
+        month_year: str = "2026-02",
+        carryover_override: Optional[Dict[str, Any]] = None,
+        disabled_constraints: Optional[List[str]] = None,
+        enable_diagnosis: bool = True,
+    ):
         """
         初期化
         
@@ -50,6 +58,8 @@ class ShiftOptimizer:
         self.month_year = month_year
         self.year, self.month = map(int, month_year.split('-'))
         self.carryover_override = carryover_override
+        self.disabled_constraints = [str(item) for item in (disabled_constraints or [])]
+        self.enable_diagnosis = enable_diagnosis
         
         # OR-Tools初期化
         self.model = cp_model.CpModel()
@@ -71,12 +81,15 @@ class ShiftOptimizer:
         # 結果保存
         self.solve_time = 0.0
         self.solve_status = ""
+        self.solver_status_code: Optional[int] = None
+        self.solver_status_name: Optional[str] = None
         self.violations = []
+        self.diagnosis: Optional[Dict[str, Any]] = None
         
     def load_data(self) -> None:
         """プロジェクトデータの読み込み"""
         try:
-            print(f"[INFO] {self.month_year} のシフト最適化を開始...")
+            # noisy log removed
             
             # スタッフ・ルール・希望休み読み込み
             self.staff_list = load_project_staff()
@@ -92,12 +105,7 @@ class ShiftOptimizer:
             # 対象月の日付リスト作成
             self._generate_dates()
             
-            print(f"[INFO] データ読み込み完了:")
-            print(f"   - スタッフ: {len(self.staff_list)}名")
-            print(f"   - 施設ルール: {len(self.rules['facility_rules'])}個") 
-            print(f"   - 個人ルール: {len(self.rules['personal_rules'])}個")
-            print(f"   - 人間関係ルール: {len(self.rules['relationship_rules'])}個")
-            print(f"   - 対象日数: {len(self.dates)}日")
+            # noisy log removed
             
         except Exception as e:
             raise Exception(f"データ読み込みエラー: {e}")
@@ -125,7 +133,7 @@ class ShiftOptimizer:
     def build_model(self) -> None:
         """最適化モデルの構築"""
         try:
-            print("[INFO] 最適化モデル構築中...")
+            # noisy log removed
             
             # 1. 決定変数作成
             self._create_variables()
@@ -133,7 +141,8 @@ class ShiftOptimizer:
             # 2. 制約マネージャー初期化
             self.constraint_manager = ConstraintManager(
                 self.model, self.shift, self.staff_list, 
-                self.rules, self.request_holidays, self.dates, self.carryover
+                self.rules, self.request_holidays, self.dates, self.carryover,
+                disabled_constraints=self.disabled_constraints
             )
             
             # 3. 制約追加
@@ -142,14 +151,14 @@ class ShiftOptimizer:
             # 4. 目的関数構築
             self._build_objective()
             
-            print("[OK] モデル構築完了")
+            # noisy log removed
             
         except Exception as e:
             raise Exception(f"モデル構築エラー: {e}")
     
     def _create_variables(self) -> None:
         """決定変数 shift[staff_id, date] の作成"""
-        print("   - 決定変数作成中...")
+        # noisy log removed
         
         # 勤務区分の範囲: 0-5 (ShiftTypeの値域)
         # 0: DAY, 1: NIGHT, 2: NIGHT_SHIFT_OFF, 3: PUBLIC_HOLIDAY, 4: REQUEST_HOLIDAY, 5: PAID_HOLIDAY
@@ -163,11 +172,11 @@ class ShiftOptimizer:
                     min_shift, max_shift, var_name
                 )
                 
-        print(f"   - 決定変数 {len(self.shift)}個 作成完了")
+        # noisy log removed
         
     def _add_constraints(self) -> None:
         """全制約の追加"""
-        print("   - 制約追加中...")
+        # noisy log removed
         
         if self.constraint_manager is None:
             raise RuntimeError("ConstraintManager が初期化されていません")
@@ -184,11 +193,11 @@ class ShiftOptimizer:
         # 人間関係ルール制約（RR001）
         self.constraint_manager.add_relationship_constraints()
         
-        print("   - 制約追加完了")
+        # noisy log removed
         
     def _build_objective(self) -> None:
         """目的関数の構築"""
-        print("   - 目的関数構築中...")
+        # noisy log removed
         
         if self.constraint_manager is None:
             raise RuntimeError("ConstraintManager が初期化されていません")
@@ -210,7 +219,7 @@ class ShiftOptimizer:
             dummy_var = self.model.NewIntVar(0, 1, "dummy")
             self.model.Minimize(dummy_var)
             
-        print("   - 目的関数構築完了")
+        # noisy log removed
         
     def solve(self) -> ShiftResult:
         """
@@ -220,10 +229,12 @@ class ShiftOptimizer:
             ShiftResult: 最適化結果（ステータス・シフト・違反情報等）
         """
         try:
-            print("[RUN] 最適化実行中...")
+            # print("[RUN] 最適化実行中...")
             
-            # タイムアウト設定（60秒）
-            self.solver.parameters.max_time_in_seconds = 60
+            # タイムアウト設定（config.py）
+            self.solver.parameters.max_time_in_seconds = float(
+                config.SOLVER_CONFIG.get('max_time_in_seconds', 60.0)
+            )
             
             # 最適化実行
             start_time = time.time()
@@ -231,35 +242,50 @@ class ShiftOptimizer:
             end_time = time.time()
             
             self.solve_time = end_time - start_time
+            self.solver_status_code = int(status)
+            self.solver_status_name = self._status_to_name(status)
             
             # ステータス判定
             if status == cp_model.OPTIMAL:
                 self.solve_status = "OPTIMAL"
-                print(f"[OK] 最適解発見！ ({self.solve_time:.2f}秒)")
+                # print(f"[OK] 最適解発見！ ({self.solve_time:.2f}秒)")
             elif status == cp_model.FEASIBLE:
                 self.solve_status = "FEASIBLE"
-                print(f"[WARN] 実行可能解発見 ({self.solve_time:.2f}秒)")
+                # print(f"[WARN] 実行可能解発見 ({self.solve_time:.2f}秒)")
             elif status == cp_model.INFEASIBLE:
                 self.solve_status = "INFEASIBLE"
-                print(f"[ERROR] 実行不可能 ({self.solve_time:.2f}秒)")
+                self.diagnosis = self._diagnose_infeasibility()
+                # print(f"[ERROR] 実行不可能 ({self.solve_time:.2f}秒)")
                 # 空の結果を返す
                 return ShiftResult(
                     month=self.month_year,
                     shifts={},
                     violations=[],
                     solver_time=self.solve_time,
-                    solver_status=self.solve_status
+                    solver_status=self.solve_status,
+                    solver_status_code=self.solver_status_code,
+                    solver_status_name=self.solver_status_name,
+                    diagnosis=self.diagnosis
                 )
             else:
                 self.solve_status = "UNKNOWN"
-                print(f"❓ 解不明 ({self.solve_time:.2f}秒)")
+                self.diagnosis = {
+                    "available": False,
+                    "message": "ソルバーステータスがUNKNOWNのため、競合診断をスキップしました。",
+                    "solver_status_code": self.solver_status_code,
+                    "solver_status_name": self.solver_status_name,
+                }
+                # print(f"解不明 ({self.solve_time:.2f}秒)")
                 # 空の結果を返す
                 return ShiftResult(
                     month=self.month_year,
                     shifts={},
                     violations=[],
                     solver_time=self.solve_time,
-                    solver_status=self.solve_status
+                    solver_status=self.solve_status,
+                    solver_status_code=self.solver_status_code,
+                    solver_status_name=self.solver_status_name,
+                    diagnosis=self.diagnosis
                 )
                 
             # 結果抽出
@@ -271,7 +297,7 @@ class ShiftOptimizer:
             
     def _extract_solution(self) -> ShiftResult:
         """最適化結果の抽出"""
-        print("[INFO] 結果抽出中...")
+        # noisy log removed
         
         # シフト結果抽出
         shifts = {}
@@ -288,14 +314,140 @@ class ShiftOptimizer:
             shifts=shifts,
             violations=self.violations,
             solver_time=self.solve_time,
-            solver_status=self.solve_status
+            solver_status=self.solve_status,
+            solver_status_code=self.solver_status_code,
+            solver_status_name=self.solver_status_name,
+            diagnosis=self.diagnosis
         )
         
-        print(f"[INFO] 結果抽出完了:")
-        print(f"   - シフト割当: {len(shifts)}件")
-        print(f"   - 制約違反: {len(self.violations)}件")
+        # noisy log removed
         
         return result
+
+    @staticmethod
+    def _status_to_text(status: int) -> str:
+        if status == cp_model.OPTIMAL:
+            return "OPTIMAL"
+        if status == cp_model.FEASIBLE:
+            return "FEASIBLE"
+        if status == cp_model.INFEASIBLE:
+            return "INFEASIBLE"
+        return "UNKNOWN"
+
+    @staticmethod
+    def _status_to_name(status: int) -> str:
+        status_map = {
+            cp_model.OPTIMAL: "OPTIMAL",
+            cp_model.FEASIBLE: "FEASIBLE",
+            cp_model.INFEASIBLE: "INFEASIBLE",
+            getattr(cp_model, "MODEL_INVALID", -999999): "MODEL_INVALID",
+            getattr(cp_model, "UNKNOWN", -999998): "UNKNOWN",
+        }
+        return status_map.get(status, f"UNMAPPED_{status}")
+
+    @staticmethod
+    def _is_rank_a(rule: Dict[str, Any]) -> bool:
+        return str(rule.get("rank", "A")).upper() == "A"
+
+    def _collect_diagnosis_candidates(self) -> List[str]:
+        candidates: List[str] = []
+        candidates.append("REQUEST_HOLIDAYS")
+        candidates.append("CARRYOVER")
+
+        facility_rank_a_ids = {
+            str(rule.get("id"))
+            for rule in self.rules.get("facility_rules", [])
+            if rule.get("id") and self._is_rank_a(rule)
+        }
+        ordered_facility_keys = [
+            "FR001", "FR023", "FR002", "FR003", "FR008",
+            "FR011", "FR012", "FR022", "FR013",
+        ]
+        for key in ordered_facility_keys:
+            if key in facility_rank_a_ids:
+                candidates.append(key)
+        if any(key in facility_rank_a_ids for key in ("FR004", "FR005", "FR006", "FR007")):
+            candidates.append("FR004_TO_FR007")
+
+        for rule in self.rules.get("personal_rules", []):
+            rule_id = rule.get("id")
+            if rule_id and self._is_rank_a(rule):
+                candidates.append(str(rule_id))
+
+        for rule in self.rules.get("relationship_rules", []):
+            rule_id = rule.get("id")
+            if rule_id and self._is_rank_a(rule):
+                candidates.append(str(rule_id))
+
+        unique_candidates: List[str] = []
+        seen = set()
+        for key in candidates:
+            if key in seen:
+                continue
+            seen.add(key)
+            unique_candidates.append(key)
+        return unique_candidates
+
+    def _probe_status_with_disabled_constraints(self, extra_disabled: List[str], probe_time_sec: float) -> str:
+        disabled = sorted(set(self.disabled_constraints).union(set(extra_disabled)))
+        probe = ShiftOptimizer(
+            month_year=self.month_year,
+            carryover_override=self.carryover_override,
+            disabled_constraints=disabled,
+            enable_diagnosis=False,
+        )
+        probe.load_data()
+        probe.build_model()
+        probe.solver.parameters.max_time_in_seconds = probe_time_sec
+        status = probe.solver.Solve(probe.model)
+        return self._status_to_text(status)
+
+    def _diagnose_infeasibility(self) -> Dict[str, Any]:
+        if not self.enable_diagnosis:
+            return {"available": False, "message": "診断は無効化されています。"}
+
+        try:
+            candidates = self._collect_diagnosis_candidates()
+            base_limit = float(config.SOLVER_CONFIG.get("max_time_in_seconds", 60.0))
+            probe_time_sec = max(1.0, min(3.0, base_limit / 30.0))
+
+            single_hits: List[Dict[str, Any]] = []
+            max_single_candidates = min(20, len(candidates))
+            single_source = candidates[:max_single_candidates]
+            for key in single_source:
+                status = self._probe_status_with_disabled_constraints([key], probe_time_sec)
+                if status in ("OPTIMAL", "FEASIBLE"):
+                    single_hits.append({"disabled": [key], "result_status": status})
+
+            pair_hits: List[Dict[str, Any]] = []
+            if not single_hits:
+                max_pair_candidates = min(10, len(single_source))
+                pair_source = single_source[:max_pair_candidates]
+                for left, right in combinations(pair_source, 2):
+                    status = self._probe_status_with_disabled_constraints([left, right], probe_time_sec)
+                    if status in ("OPTIMAL", "FEASIBLE"):
+                        pair_hits.append({"disabled": [left, right], "result_status": status})
+                    if len(pair_hits) >= 8:
+                        break
+
+            return {
+                "available": True,
+                "base_status": self.solve_status,
+                "probe_time_limit_sec": probe_time_sec,
+                "candidate_count": len(candidates),
+                "single_probe_count": len(single_source),
+                "truncated": len(candidates) > len(single_source),
+                "single_rule_relaxations": single_hits,
+                "pair_rule_relaxations": pair_hits,
+                "message": (
+                    "single_rule_relaxations が空の場合は、単体ではなく複合条件の競合の可能性があります。"
+                ),
+            }
+        except Exception as e:
+            return {
+                "available": False,
+                "error": f"診断実行エラー: {e}"
+            }
         
     def optimize(self) -> ShiftResult:
         """
@@ -317,5 +469,5 @@ class ShiftOptimizer:
             return result
             
         except Exception as e:
-            print(f"[ERROR] 最適化エラー: {e}")
+            # print(f"[ERROR] 最適化エラー: {e}")
             raise

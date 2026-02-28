@@ -150,11 +150,11 @@ facility_rules:
   other_penalty: 1
   title: 夜勤優先抑制
 - constraint_type: max_consecutive_equivalent_work_days
-  description: 夜[夜]と明け[明]を連勤として扱い、日[日]/夜[夜]/明[明]の6連勤相当を禁止する
+  description: 夜[夜]と明け[明]を連勤として扱い、日[日]/夜[夜]/明[明]の5連勤相当を禁止する
   id: FR026
-  max_equivalent_days: 5
+  max_equivalent_days: 4
   rank: B
-  title: 6連勤相当禁止
+  title: 5連勤相当禁止
 personal_rules:
 - constraint_type: no_night_shift
   description: 夜勤に入ることはできない

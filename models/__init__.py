@@ -6,7 +6,7 @@ AutoShift - データモデル層
 from enum import Enum
 from dataclasses import dataclass
 from datetime import date
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Any
 
 # ====================
 # 列挙型定義
@@ -82,6 +82,9 @@ class ShiftResult:
     violations: List[Dict]  # [(staff_id, date, rank, rule_id, description)]
     solver_time: float
     solver_status: str  # "OPTIMAL" / "FEASIBLE" / "INFEASIBLE"
+    solver_status_code: Optional[int] = None
+    solver_status_name: Optional[str] = None
+    diagnosis: Optional[Dict[str, Any]] = None
 
 # ====================
 # エクスポート

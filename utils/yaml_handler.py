@@ -68,7 +68,7 @@ def load_staff_list(path: str) -> List[Staff]:
             )
             staff_list.append(staff)
             
-        print(f"[OK] スタッフ {len(staff_list)}名を読み込み完了")
+        # print(f"[OK] スタッフ {len(staff_list)}名を読み込み完了")
         return staff_list
         
     except FileNotFoundError:
@@ -129,7 +129,7 @@ def load_rules(path: str) -> Dict[str, Any]:
         relationship_count = len(result['relationship_rules'])
         total_count = facility_count + personal_count + relationship_count
         
-        print(f"[OK] ルール読み込み完了 - 施設:{facility_count}, 個人:{personal_count}, 人間関係:{relationship_count} (計{total_count}ルール)")
+        # print(f"[OK] ルール読み込み完了 - 施設:{facility_count}, 個人:{personal_count}, 人間関係:{relationship_count} (計{total_count}ルール)")
         return result
         
     except FileNotFoundError:
@@ -186,7 +186,7 @@ def load_request_holidays(path: str) -> Dict[str, Any]:
                 elif req.get('type') == '有':
                     paid_count += 1
                     
-        print(f"[OK] 希望休読み込み完了 - {data['month']} (希望休:{request_count}, 有給:{paid_count}, 計:{total_requests}件)")
+        # print(f"[OK] 希望休読み込み完了 - {data['month']} (希望休:{request_count}, 有給:{paid_count}, 計:{total_requests}件)")
         return data
         
     except FileNotFoundError:
@@ -221,7 +221,7 @@ def save_staff_list(path: str, staff_list: List[Staff]) -> None:
         with open(path, 'w', encoding='utf-8') as f:
             yaml.dump(data, f, allow_unicode=True, default_flow_style=False, indent=2)
             
-        print(f"[OK] スタッフリスト保存完了: {path}")
+        # print(f"[OK] スタッフリスト保存完了: {path}")
         
     except Exception as e:
         raise Exception(f"スタッフリスト保存エラー: {e}")
@@ -242,20 +242,16 @@ def load_project_rules() -> Dict[str, Any]:
 
 def load_project_request_holidays(month: str = "2026-02") -> Dict[str, Any]:
     """プロジェクトの希望休を読み込み (デフォルト: 2026-02)。
-    優先順:
-    1) data/request_holidays/YYYY/request_holidays_YYYY_MM.yml
-    2) 旧: data/request_holidays_YYYY_MM.yml
+    参照先:
+    - data/request_holidays/YYYY/request_holidays_YYYY_MM.yml
     """
     project_root = Path(__file__).parent.parent
     year = month.split('-')[0]
     filename = f"request_holidays_{month.replace('-', '_')}.yml"
     new_path = project_root / "data" / "request_holidays" / year / filename
-    old_path = project_root / "data" / filename
 
     if new_path.exists():
         return load_request_holidays(str(new_path))
-    if old_path.exists():
-        return load_request_holidays(str(old_path))
 
     # 初回作成前は空の月データを返す
     return {
@@ -276,7 +272,7 @@ def save_rules(path: str, rules_data: Dict[str, Any]) -> None:
         with open(path, 'w', encoding='utf-8') as f:
             yaml.dump(rules_data, f, allow_unicode=True, default_flow_style=False, indent=2)
             
-        print(f"[OK] ルール保存完了: {path}")
+        # print(f"[OK] ルール保存完了: {path}")
         
     except Exception as e:
         raise Exception(f"ルール保存エラー: {e}")
@@ -294,7 +290,7 @@ def save_request_holidays(path: str, holidays_data: Dict[str, Any]) -> None:
         with open(path, 'w', encoding='utf-8') as f:
             yaml.dump(holidays_data, f, allow_unicode=True, default_flow_style=False, indent=2)
             
-        print(f"[OK] 希望休データ保存完了: {path}")
+        # print(f"[OK] 希望休データ保存完了: {path}")
         
     except Exception as e:
         raise Exception(f"希望休データ保存エラー: {e}")

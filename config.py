@@ -22,7 +22,7 @@ REQUEST_HOLIDAYS_202602 = DATA_DIR / 'request_holidays_2026_02.yml'
 
 # OR-Tools ソルバー設定
 SOLVER_CONFIG = {
-    'max_time_in_seconds': 60.0,
+    'max_time_in_seconds': 120.0,
     'num_workers': 4,
     'log_search_progress': False
 }
